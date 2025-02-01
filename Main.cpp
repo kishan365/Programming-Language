@@ -324,6 +324,8 @@ ExprNode *ParseSubexpression(Tokenizer *t, bool start) {
         }
     }
 
+    // HW: support for braces
+
     printf("error: expected operand\n");
     exit(1);
 }
