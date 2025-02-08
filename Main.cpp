@@ -26,7 +26,7 @@ enum TokenKind {
     TokenKind_And,        // &&
 };
 
-const char *TokenNames[] = {
+const char* TokenNames[] = {
     "invalid", "number", "identifier", "=", ";", "+", "-", "*", "/", "(", ")", "|", "&", "~", "==", "||", "&&"
 };
 
@@ -38,12 +38,12 @@ struct Token {
 };
 
 struct Tokenizer {
-    const char *Input;
+    const char* Input;
     int         Position;
     int         Length;
 };
 
-bool SkipWhitespaces(Tokenizer *tokenizer) {
+bool SkipWhitespaces(Tokenizer* tokenizer) {
     char ch = tokenizer->Input[tokenizer->Position];
     if (!isspace(ch)) return false;
 
@@ -56,10 +56,10 @@ bool SkipWhitespaces(Tokenizer *tokenizer) {
 }
 
 const char      SingleCharTokenInput[] = { '=', ';', '+', '-', '*', '/', '(', ')', '|', '&', '~' };
-const TokenKind SingleCharTokenOutput[] = { 
-    TokenKind_Equal, 
-    TokenKind_Semicolon, 
-    TokenKind_Plus, 
+const TokenKind SingleCharTokenOutput[] = {
+    TokenKind_Equal,
+    TokenKind_Semicolon,
+    TokenKind_Plus,
     TokenKind_Minus,
     TokenKind_Multiply,
     TokenKind_Divide,
@@ -97,9 +97,8 @@ bool IsNumberSeparator(char c) {
     return isspace(c);
 }
 
-bool Tokenize(Tokenizer *tokenizer, Token *token) {
+bool Tokenize(Tokenizer* tokenizer, Token* token) {
     memset(token, 0, sizeof(*token));
-
     while (tokenizer->Position < tokenizer->Length) {
         if (!SkipWhitespaces(tokenizer))
             break;
@@ -147,7 +146,7 @@ bool Tokenize(Tokenizer *tokenizer, Token *token) {
             }
         }
 
-        char *endptr = 0;
+        char* endptr = 0;
         double number = strtod(str, &endptr);
 
         if (str + len != endptr) {
@@ -188,12 +187,13 @@ bool Tokenize(Tokenizer *tokenizer, Token *token) {
     return false;
 }
 
-void PrintToken(const Token *token) {
+void PrintToken(const Token* token) {
     printf("    %s ", TokenNames[token->Kind]);
 
     if (token->Kind == TokenKind_Number) {
         printf("(%f)", token->Number);
-    } else if (token->Kind == TokenKind_Identifier) {
+    }
+    else if (token->Kind == TokenKind_Identifier) {
         printf("(%s)", token->Identifier);
     }
 
@@ -251,12 +251,15 @@ enum ExprKind {
     ExprKind_Assignment,
     ExprKind_Number,
     ExprKind_Identifier,
+
+    ExprKind_OpenBrace,
+    ExprKind_CloseBrace
 };
 
 struct ExprNode {
     ExprKind Kind;
-    ExprNode *Left;
-    ExprNode *Right;
+    ExprNode* Left;
+    ExprNode* Right;
     BinaryOperatorKind BinaryOperator;
     UnaryOperatorKind UnaryOperator;
     Token SrcToken;
@@ -265,13 +268,13 @@ struct ExprNode {
 static ExprNode ExprNodeBuffers[8192];
 static int ExprNodePos = 0;
 
-ExprNode *ExprNodeCreate(ExprKind kind) {
+ExprNode* ExprNodeCreate(ExprKind kind) {
     if (ExprNodePos == ArrayCount(ExprNodeBuffers)) {
         printf("error: out of memory");
         exit(1);
     }
 
-    ExprNode *node = &ExprNodeBuffers[ExprNodePos];
+    ExprNode* node = &ExprNodeBuffers[ExprNodePos];
     ExprNodePos++;
     memset(node, 0, sizeof(*node));
     node->Kind = kind;
@@ -282,7 +285,7 @@ void ExprNodeReset() {
     ExprNodePos = 0;
 }
 
-ExprNode *ParseSubexpression(Tokenizer *t, bool start) {
+ExprNode* ParseSubexpression(Tokenizer* t, bool start) {
     Token token;
 
     if (!Tokenize(t, &token)) {
@@ -291,21 +294,27 @@ ExprNode *ParseSubexpression(Tokenizer *t, bool start) {
     }
 
     if (token.Kind == TokenKind_Number) {
-        ExprNode *expr = ExprNodeCreate(ExprKind_Number);
+        ExprNode* expr = ExprNodeCreate(ExprKind_Number);
         expr->SrcToken = token;
         return expr;
     }
 
     if (token.Kind == TokenKind_Identifier) {
-        ExprNode *expr = ExprNodeCreate(ExprKind_Identifier);
+        ExprNode* expr = ExprNodeCreate(ExprKind_Identifier);
         expr->SrcToken = token;
         return expr;
     }
 
     if (start) {
+        if (token.Kind == TokenKind_OpenBrace) {
+            ExprNode* expr = ExprNodeCreate(ExprKind_OpenBrace);
+            expr->SrcToken = token;
+            expr->Left = ParseSubexpression(t, true);
+            return expr;
+        }
         for (int iter = 0; iter < ArrayCount(UnaryOperatorStartInput); ++iter) {
             if (token.Kind == UnaryOperatorStartInput[iter]) {
-                ExprNode *expr = ExprNodeCreate(ExprKind_UnaryOperator);
+                ExprNode* expr = ExprNodeCreate(ExprKind_UnaryOperator);
                 expr->Left = ParseSubexpression(t, false);
                 expr->UnaryOperator = UnaryOperatorStartOutput[iter];
                 expr->SrcToken = token;
@@ -316,12 +325,17 @@ ExprNode *ParseSubexpression(Tokenizer *t, bool start) {
 
     for (int iter = 0; iter < ArrayCount(UnaryOperatorInput); ++iter) {
         if (token.Kind == UnaryOperatorInput[iter]) {
-            ExprNode *expr = ExprNodeCreate(ExprKind_UnaryOperator);
+            ExprNode* expr = ExprNodeCreate(ExprKind_UnaryOperator);
             expr->Left = ParseSubexpression(t, false);
             expr->UnaryOperator = UnaryOperatorStartOutput[iter];
             expr->SrcToken = token;
             return expr;
         }
+    }
+    if (token.Kind == TokenKind_CloseBrace) {
+        ExprNode* expr = ExprNodeCreate(ExprKind_CloseBrace);
+        expr->SrcToken = token;
+        return expr;
     }
 
     // HW: support for braces
@@ -330,32 +344,38 @@ ExprNode *ParseSubexpression(Tokenizer *t, bool start) {
     exit(1);
 }
 
-ExprNode *ParseExpression(Tokenizer *t, bool start) {
-    ExprNode *left = ParseSubexpression(t, true);
+ExprNode* ParseExpression(Tokenizer* t, bool start) {
+    ExprNode* left = ParseSubexpression(t, true);
 
     Token token = {};
+    ExprNode* CloseBrac = NULL;
     while (Tokenize(t, &token)) {
+        CloseBrac = ExprNodeCreate(ExprKind_CloseBrace);
+        if (token.Kind == TokenKind_CloseBrace) {
+            CloseBrac->Left = left;
+        }
         if (start) {
             if (token.Kind == TokenKind_Equal) {
-                ExprNode *expr = ExprNodeCreate(ExprKind_Assignment);
+                ExprNode* expr = ExprNodeCreate(ExprKind_Assignment);
                 expr->Left = left;
                 expr->Right = ParseExpression(t, false);
                 expr->SrcToken = token;
+                CloseBrac->Right = expr;
                 return expr;
             }
         }
-
         start = false;
         bool invalid_op = true;
 
-        ExprNode *expr = ExprNodeCreate(ExprKind_BinaryOperator);
+
+        ExprNode* expr = ExprNodeCreate(ExprKind_BinaryOperator);
         expr->Left = left;
         expr->SrcToken = token;
-
         for (int iter = 0; iter < ArrayCount(BinaryOperatorInput); ++iter) {
             if (token.Kind == BinaryOperatorInput[iter]) {
                 expr->BinaryOperator = BinaryOperatorOutput[iter];
                 invalid_op = false;
+                CloseBrac->Right = expr;
                 break;
             }
         }
@@ -365,7 +385,14 @@ ExprNode *ParseExpression(Tokenizer *t, bool start) {
         }
 
         expr->Right = ParseSubexpression(t, false);
+
         left = expr;
+    }
+    if (token.Kind == TokenKind_CloseBrace) {
+        if (!Tokenize(t, &token)) {
+            printf("Error: Expected Semicolon\n");
+            exit(1);
+        }
     }
 
     if (token.Kind == TokenKind_Semicolon) {
@@ -376,7 +403,7 @@ ExprNode *ParseExpression(Tokenizer *t, bool start) {
     exit(1);
 }
 
-void PrintExpr(ExprNode *expr, int indent) {
+void PrintExpr(ExprNode* expr, int indent) {
     for (int iter = 0; iter < indent; ++iter) {
         printf("    ");
     }
@@ -410,14 +437,18 @@ void PrintExpr(ExprNode *expr, int indent) {
         PrintExpr(expr->Right, indent + 1);
         return;
     }
+    if (expr->Kind == ExprKind_OpenBrace) {
+        printf("Open Brace: %s\n", TokenNames[expr->SrcToken.Kind]);
+        PrintExpr(expr->Left, indent + 1);
+    }
 }
 
-void Evaluate(ExprNode *expr) {
+void Evaluate(ExprNode* expr) {
     printf("(todo)\n");
 }
 
 int main() {
-    const char *input = "x = - y + 2 * c; z = x * 2;";
+    const char* input = "x =( - y + 2 * c); z = x * 2;";
 
     Tokenizer t;
     t.Input = input;
@@ -425,7 +456,7 @@ int main() {
     t.Length = strlen(input);
 
     while (t.Position < t.Length) {
-        ExprNode *expr = ParseExpression(&t, true);
+        ExprNode* expr = ParseExpression(&t, true);
         PrintExpr(expr, 0);
         Evaluate(expr);
         ExprNodeReset();
