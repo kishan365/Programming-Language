@@ -221,6 +221,13 @@ const BinaryOperatorKind BinaryOperatorOutput[] = {
     BinaryOperator_Divide,
 };
 
+const int BinaryOperatorPrecedence[] = {
+    0,
+    0,
+    1,
+    1,
+};
+
 enum UnaryOperatorKind {
     UnaryOperator_Plus,
     UnaryOperator_Minus,
@@ -296,6 +303,10 @@ void AdvanceToken(Parser *parser) {
     parser->Parsing = Tokenize(&parser->Lex, &parser->Current);
 }
 
+Token GetCurrentToken(Parser *parser) {
+    return parser->Current;
+}
+
 bool PeekToken(Parser *parser, TokenKind kind) {
     return parser->Current.Kind == kind;
 }
@@ -314,7 +325,7 @@ bool ExpectToken(Parser *parser, TokenKind kind) {
     return AcceptToken(parser, kind, &token);
 }
 
-ExprNode *ParseExpression(Parser *parser, bool start);
+ExprNode *ParseExpression(Parser *parser, bool start, int prec);
 
 ExprNode* ParseSubexpression(Parser *parser, bool start) {
     Token token = {};
@@ -332,7 +343,7 @@ ExprNode* ParseSubexpression(Parser *parser, bool start) {
     }
 
     if (ExpectToken(parser, TokenKind_OpenBrace)) {
-        ExprNode *expr = ParseExpression(parser, true);
+        ExprNode *expr = ParseExpression(parser, true, -1);
         if (!ExpectToken(parser, TokenKind_CloseBrace)) {
             printf("error: expected close brace\n");
             exit(1);
@@ -366,10 +377,8 @@ ExprNode* ParseSubexpression(Parser *parser, bool start) {
     exit(1);
 }
 
-ExprNode* ParseExpression(Parser* parser, bool start) {
+ExprNode* ParseExpression(Parser* parser, bool start, int prev_prec) {
     ExprNode* left = ParseSubexpression(parser, true);
-
-    // operator precedence
 
     while (Parsing(parser)) {
         if (start) {
@@ -377,30 +386,35 @@ ExprNode* ParseExpression(Parser* parser, bool start) {
             if (AcceptToken(parser, TokenKind_Equal, &token)) {
                 ExprNode* expr = ExprNodeCreate(ExprKind_Assignment);
                 expr->Left = left;
-                expr->Right = ParseExpression(parser, false);
+                expr->Right = ParseExpression(parser, false, -1);
                 expr->SrcToken = token;
                 return expr;
             }
         }
         start = false;
-        bool invalid_op = true;
 
-        ExprNode* expr = ExprNodeCreate(ExprKind_BinaryOperator);
-        expr->Left = left;
+        int prec = 0;
+        int binary_op = -1;
 
         for (int iter = 0; iter < ArrayCount(BinaryOperatorInput); ++iter) {
-            if (AcceptToken(parser, BinaryOperatorInput[iter], &expr->SrcToken)) {
-                expr->BinaryOperator = BinaryOperatorOutput[iter];
-                invalid_op = false;
+            if (PeekToken(parser, BinaryOperatorInput[iter])) {
+                prec = BinaryOperatorPrecedence[iter];
+                binary_op = iter;
                 break;
             }
         }
 
-        if (invalid_op) {
+        if (binary_op == -1 || prec <= prev_prec)
             break;
-        }
 
-        expr->Right = ParseExpression(parser, false);
+        ExprNode *expr = ExprNodeCreate(ExprKind_BinaryOperator);
+        expr->Left = left;
+        expr->BinaryOperator = BinaryOperatorOutput[binary_op];
+        expr->SrcToken = GetCurrentToken(parser);
+
+        AdvanceToken(parser);
+
+        expr->Right = ParseExpression(parser, false, prec);
 
         left = expr;
     }
@@ -409,7 +423,7 @@ ExprNode* ParseExpression(Parser* parser, bool start) {
 }
 
 ExprNode *ParseRootExpression(Parser *parser) {
-    ExprNode *expr = ParseExpression(parser, true);
+    ExprNode *expr = ParseExpression(parser, true, -1);
     if (!ExpectToken(parser, TokenKind_Semicolon)) {
         printf("error: expected semicolon\n");
         exit(1);
@@ -468,7 +482,7 @@ Parser StartParsing(const char *str, int length) {
 }
 
 int main() {
-    const char* input = "x = y + 2 * c; z = x * 2;";
+    const char* input = "x = y * 2 + c; z = x * 2;";
 
     Parser parser = StartParsing(input, strlen(input));
 
