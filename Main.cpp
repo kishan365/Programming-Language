@@ -467,9 +467,50 @@ void PrintExpr(ExprNode* expr, int indent) {
     }
 }
 
-void Evaluate(ExprNode* expr) {
-    // evaluate
-    printf("(todo)\n");
+double Evaluate(ExprNode* expr) {
+    if (expr->Kind == ExprKind_Number) {
+        return expr->SrcToken.Number;
+    }
+    else if (expr->Kind == ExprKind_Identifier) {
+        printf("TODO\n");
+        return 0;
+    }
+    else if (expr->Kind == ExprKind_UnaryOperator) {
+        if (expr->UnaryOperator == UnaryOperator_Plus) {
+           return Evaluate(expr->Left);
+        }
+        else if (expr->UnaryOperator == UnaryOperator_Minus) {
+            return -Evaluate(expr->Left);
+        }
+        else {
+            printf("TODO\n");
+            return 0;
+        }
+    }
+    else if (expr->Kind == ExprKind_BinaryOperator) {
+        double L = Evaluate(expr->Left);
+        double R = Evaluate(expr->Right);
+        if (expr->BinaryOperator == BinaryOperator_Plus) {
+            return (L + R);
+        }
+        else if (expr->BinaryOperator == BinaryOperator_Minus) {
+            return (L - R);
+        }
+        else if (expr->BinaryOperator == BinaryOperator_Multiply) {
+            return (L * R);
+        }
+        else if (expr->BinaryOperator == BinaryOperator_Divide) {
+            return (L / R);
+        }
+        else {
+            printf("TODO\n");
+            return 0;
+        }
+    }
+    else {
+        printf("TODO\n");
+        return 0;
+    }
 }
 
 Parser StartParsing(const char *str, int length) {
@@ -482,15 +523,16 @@ Parser StartParsing(const char *str, int length) {
 }
 
 int main() {
-    const char* input = "x = y * 2 + c; z = x * 2;";
+    const char* input = "3 * (2 + 1);  4 * 2;";
 
     Parser parser = StartParsing(input, strlen(input));
-
+    double Result;
     while (Parsing(&parser)) {
         ExprNode* expr = ParseRootExpression(&parser);
         PrintExpr(expr, 0);
-        Evaluate(expr);
+        Result = Evaluate(expr);
         ExprNodeReset();
+        printf("Result = %f\n", Result);
         printf("=================================================================================\n");
     }
 
