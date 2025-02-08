@@ -467,7 +467,20 @@ void PrintExpr(ExprNode* expr, int indent) {
     }
 }
 
-double Evaluate(ExprNode* expr) {
+
+//Create a structure which will store the variables 
+
+struct Variable {
+    char Name[MAX_IDENTIFIER_SIZE];
+    double Value;
+};
+struct Memory {
+    double Ans;
+    Variable Vars[1024];//Loop through this variable and return the matched one 
+};
+
+
+double Evaluate(ExprNode* expr, Memory *mem) {
     if (expr->Kind == ExprKind_Number) {
         return expr->SrcToken.Number;
     }
@@ -477,10 +490,10 @@ double Evaluate(ExprNode* expr) {
     }
     else if (expr->Kind == ExprKind_UnaryOperator) {
         if (expr->UnaryOperator == UnaryOperator_Plus) {
-           return Evaluate(expr->Left);
+           return Evaluate(expr->Left,mem);
         }
         else if (expr->UnaryOperator == UnaryOperator_Minus) {
-            return -Evaluate(expr->Left);
+            return -Evaluate(expr->Left,mem);
         }
         else {
             printf("TODO\n");
@@ -488,8 +501,8 @@ double Evaluate(ExprNode* expr) {
         }
     }
     else if (expr->Kind == ExprKind_BinaryOperator) {
-        double L = Evaluate(expr->Left);
-        double R = Evaluate(expr->Right);
+        double L = Evaluate(expr->Left,mem);
+        double R = Evaluate(expr->Right,mem);
         if (expr->BinaryOperator == BinaryOperator_Plus) {
             return (L + R);
         }
@@ -507,11 +520,19 @@ double Evaluate(ExprNode* expr) {
             return 0;
         }
     }
+    else if (expr->Kind == ExprKind_Assignment) {
+        //do it 
+    }
     else {
         printf("TODO\n");
         return 0;
     }
 }
+
+void EvaluateRootExpr(ExprNode* expr, Memory* mem) {
+    mem->Ans = Evaluate(expr, mem);
+}
+
 
 Parser StartParsing(const char *str, int length) {
     Parser parser = {};
@@ -523,16 +544,17 @@ Parser StartParsing(const char *str, int length) {
 }
 
 int main() {
-    const char* input = "3 * (2 + 1);  4 * 2;";
+    const char* input = "a=3 * (2 + 1);  b=4 * 2;";
 
     Parser parser = StartParsing(input, strlen(input));
-    double Result;
+    Memory memory;
+    memset(&memory, 0, sizeof(memory));
     while (Parsing(&parser)) {
         ExprNode* expr = ParseRootExpression(&parser);
         PrintExpr(expr, 0);
-        Result = Evaluate(expr);
+        EvaluateRootExpr(expr,&memory);
         ExprNodeReset();
-        printf("Result = %f\n", Result);
+        printf("Result = %f\n", memory.Ans);
         printf("=================================================================================\n");
     }
 
