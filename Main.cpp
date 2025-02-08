@@ -467,26 +467,28 @@ void PrintExpr(ExprNode* expr, int indent) {
     }
 }
 
-
-//Create a structure which will store the variables 
-
 struct Variable {
     char Name[MAX_IDENTIFIER_SIZE];
     double Value;
 };
 struct Memory {
     double Ans;
-    Variable Vars[1024];//Loop through this variable and return the matched one 
+    Variable Vars[1024]; 
+    int VariableCount;
 };
-
 
 double Evaluate(ExprNode* expr, Memory *mem) {
     if (expr->Kind == ExprKind_Number) {
         return expr->SrcToken.Number;
     }
     else if (expr->Kind == ExprKind_Identifier) {
-        printf("TODO\n");
-        return 0;
+        for (int iter = 0; iter <= 1024; iter++) {
+            if (!strcmp(expr->SrcToken.Identifier, mem->Vars[iter].Name)) {
+                return mem->Vars[iter].Value;
+            }
+        }
+        printf("The variable %s is undefined\n",expr->SrcToken.Identifier);
+        exit(-1);
     }
     else if (expr->Kind == ExprKind_UnaryOperator) {
         if (expr->UnaryOperator == UnaryOperator_Plus) {
@@ -522,6 +524,16 @@ double Evaluate(ExprNode* expr, Memory *mem) {
     }
     else if (expr->Kind == ExprKind_Assignment) {
         //do it 
+
+        //Here there will be the left and right child for the assignment.
+        //the left side is always the variabel 
+        if (expr->Left->SrcToken.Kind != TokenKind_Identifier) {
+            printf("Left side of the Assignment can only be of variable type\n");
+            exit(-1);
+        }
+        strcpy_s(mem->Vars[mem->VariableCount].Name , expr->Left->SrcToken.Identifier);
+        mem->Vars[mem->VariableCount].Value = Evaluate(expr->Right,mem);
+        return mem->Vars[mem->VariableCount++].Value;
     }
     else {
         printf("TODO\n");
@@ -544,7 +556,7 @@ Parser StartParsing(const char *str, int length) {
 }
 
 int main() {
-    const char* input = "a=3 * (2 + 1);  b=4 * 2;";
+    const char* input = "a=3 * (2 + 1)+b;  b=4 * 2+a;";
 
     Parser parser = StartParsing(input, strlen(input));
     Memory memory;
