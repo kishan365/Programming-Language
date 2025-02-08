@@ -251,9 +251,6 @@ enum ExprKind {
     ExprKind_Assignment,
     ExprKind_Number,
     ExprKind_Identifier,
-
-    ExprKind_OpenBrace,
-    ExprKind_CloseBrace
 };
 
 struct ExprNode {
@@ -285,37 +282,69 @@ void ExprNodeReset() {
     ExprNodePos = 0;
 }
 
-ExprNode* ParseSubexpression(Tokenizer* t, bool start) {
-    Token token;
+struct Parser {
+    Tokenizer Lex;
+    Token     Current;
+    bool      Parsing;
+};
 
-    if (!Tokenize(t, &token)) {
-        printf("error: expected operand\n");
-        exit(1);
+bool Parsing(Parser *parser) {
+    return parser->Parsing;
+}
+
+void AdvanceToken(Parser *parser) {
+    parser->Parsing = Tokenize(&parser->Lex, &parser->Current);
+}
+
+bool PeekToken(Parser *parser, TokenKind kind) {
+    return parser->Current.Kind == kind;
+}
+
+bool AcceptToken(Parser *parser, TokenKind kind, Token *token) {
+    if (PeekToken(parser, kind)) {
+        *token = parser->Current;
+        AdvanceToken(parser);
+        return true;
     }
+    return false;
+}
 
-    if (token.Kind == TokenKind_Number) {
-        ExprNode* expr = ExprNodeCreate(ExprKind_Number);
+bool ExpectToken(Parser *parser, TokenKind kind) {
+    Token token = {};
+    return AcceptToken(parser, kind, &token);
+}
+
+ExprNode *ParseExpression(Parser *parser, bool start);
+
+ExprNode* ParseSubexpression(Parser *parser, bool start) {
+    Token token = {};
+
+    if (AcceptToken(parser, TokenKind_Number, &token)) {
+        ExprNode *expr = ExprNodeCreate(ExprKind_Number);
         expr->SrcToken = token;
         return expr;
     }
 
-    if (token.Kind == TokenKind_Identifier) {
+    if (AcceptToken(parser, TokenKind_Identifier, &token)) {
         ExprNode* expr = ExprNodeCreate(ExprKind_Identifier);
         expr->SrcToken = token;
         return expr;
     }
 
-    if (start) {
-        if (token.Kind == TokenKind_OpenBrace) {
-            ExprNode* expr = ExprNodeCreate(ExprKind_OpenBrace);
-            expr->SrcToken = token;
-            expr->Left = ParseSubexpression(t, true);
-            return expr;
+    if (ExpectToken(parser, TokenKind_OpenBrace)) {
+        ExprNode *expr = ParseExpression(parser, true);
+        if (!ExpectToken(parser, TokenKind_CloseBrace)) {
+            printf("error: expected close brace\n");
+            exit(1);
         }
+        return expr;
+    }
+
+    if (start) {
         for (int iter = 0; iter < ArrayCount(UnaryOperatorStartInput); ++iter) {
-            if (token.Kind == UnaryOperatorStartInput[iter]) {
+            if (AcceptToken(parser, UnaryOperatorStartInput[iter], &token)) {
                 ExprNode* expr = ExprNodeCreate(ExprKind_UnaryOperator);
-                expr->Left = ParseSubexpression(t, false);
+                expr->Left = ParseSubexpression(parser, false);
                 expr->UnaryOperator = UnaryOperatorStartOutput[iter];
                 expr->SrcToken = token;
                 return expr;
@@ -324,58 +353,45 @@ ExprNode* ParseSubexpression(Tokenizer* t, bool start) {
     }
 
     for (int iter = 0; iter < ArrayCount(UnaryOperatorInput); ++iter) {
-        if (token.Kind == UnaryOperatorInput[iter]) {
+        if (AcceptToken(parser, UnaryOperatorInput[iter], &token)) {
             ExprNode* expr = ExprNodeCreate(ExprKind_UnaryOperator);
-            expr->Left = ParseSubexpression(t, false);
+            expr->Left = ParseSubexpression(parser, false);
             expr->UnaryOperator = UnaryOperatorStartOutput[iter];
             expr->SrcToken = token;
             return expr;
         }
     }
-    if (token.Kind == TokenKind_CloseBrace) {
-        ExprNode* expr = ExprNodeCreate(ExprKind_CloseBrace);
-        expr->SrcToken = token;
-        return expr;
-    }
-
-    // HW: support for braces
 
     printf("error: expected operand\n");
     exit(1);
 }
 
-ExprNode* ParseExpression(Tokenizer* t, bool start) {
-    ExprNode* left = ParseSubexpression(t, true);
+ExprNode* ParseExpression(Parser* parser, bool start) {
+    ExprNode* left = ParseSubexpression(parser, true);
 
-    Token token = {};
-    ExprNode* CloseBrac = NULL;
-    while (Tokenize(t, &token)) {
-        CloseBrac = ExprNodeCreate(ExprKind_CloseBrace);
-        if (token.Kind == TokenKind_CloseBrace) {
-            CloseBrac->Left = left;
-        }
+    // operator precedence
+
+    while (Parsing(parser)) {
         if (start) {
-            if (token.Kind == TokenKind_Equal) {
+            Token token = {};
+            if (AcceptToken(parser, TokenKind_Equal, &token)) {
                 ExprNode* expr = ExprNodeCreate(ExprKind_Assignment);
                 expr->Left = left;
-                expr->Right = ParseExpression(t, false);
+                expr->Right = ParseExpression(parser, false);
                 expr->SrcToken = token;
-                CloseBrac->Right = expr;
                 return expr;
             }
         }
         start = false;
         bool invalid_op = true;
 
-
         ExprNode* expr = ExprNodeCreate(ExprKind_BinaryOperator);
         expr->Left = left;
-        expr->SrcToken = token;
+
         for (int iter = 0; iter < ArrayCount(BinaryOperatorInput); ++iter) {
-            if (token.Kind == BinaryOperatorInput[iter]) {
+            if (AcceptToken(parser, BinaryOperatorInput[iter], &expr->SrcToken)) {
                 expr->BinaryOperator = BinaryOperatorOutput[iter];
                 invalid_op = false;
-                CloseBrac->Right = expr;
                 break;
             }
         }
@@ -384,23 +400,21 @@ ExprNode* ParseExpression(Tokenizer* t, bool start) {
             break;
         }
 
-        expr->Right = ParseSubexpression(t, false);
+        expr->Right = ParseExpression(parser, false);
 
         left = expr;
     }
-    if (token.Kind == TokenKind_CloseBrace) {
-        if (!Tokenize(t, &token)) {
-            printf("Error: Expected Semicolon\n");
-            exit(1);
-        }
-    }
 
-    if (token.Kind == TokenKind_Semicolon) {
-        return left;
-    }
+    return left;
+}
 
-    printf("error: expected semicolon\n");
-    exit(1);
+ExprNode *ParseRootExpression(Parser *parser) {
+    ExprNode *expr = ParseExpression(parser, true);
+    if (!ExpectToken(parser, TokenKind_Semicolon)) {
+        printf("error: expected semicolon\n");
+        exit(1);
+    }
+    return expr;
 }
 
 void PrintExpr(ExprNode* expr, int indent) {
@@ -437,26 +451,29 @@ void PrintExpr(ExprNode* expr, int indent) {
         PrintExpr(expr->Right, indent + 1);
         return;
     }
-    if (expr->Kind == ExprKind_OpenBrace) {
-        printf("Open Brace: %s\n", TokenNames[expr->SrcToken.Kind]);
-        PrintExpr(expr->Left, indent + 1);
-    }
 }
 
 void Evaluate(ExprNode* expr) {
+    // evaluate
     printf("(todo)\n");
 }
 
+Parser StartParsing(const char *str, int length) {
+    Parser parser = {};
+    parser.Lex.Input = str;
+    parser.Lex.Position = 0;
+    parser.Lex.Length = length;
+    AdvanceToken(&parser);
+    return parser;
+}
+
 int main() {
-    const char* input = "x =( - y + 2 * c); z = x * 2;";
+    const char* input = "x = y + 2 * c; z = x * 2;";
 
-    Tokenizer t;
-    t.Input = input;
-    t.Position = 0;
-    t.Length = strlen(input);
+    Parser parser = StartParsing(input, strlen(input));
 
-    while (t.Position < t.Length) {
-        ExprNode* expr = ParseExpression(&t, true);
+    while (Parsing(&parser)) {
+        ExprNode* expr = ParseRootExpression(&parser);
         PrintExpr(expr, 0);
         Evaluate(expr);
         ExprNodeReset();
