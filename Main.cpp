@@ -572,12 +572,40 @@ Parser StartParsing(const char *str, int length) {
     return parser;
 }
 
-int main() {
-    const char* input = "a=3 * (2 + 1);  b=4 * 2+a;";
+char *ReadEntireFile(const char *filepath) {
+    FILE *fp = fopen(filepath, "rb");
+    if (!fp) {
+        printf("failed to open file: %s\n", filepath);
+        exit(-1);
+    }
+
+    fseek(fp, 0, SEEK_END);
+    long length = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    char *input = (char *)malloc(length + 1);
+    fread(input, length, 1, fp);
+    fclose(fp);
+
+    input[length] = 0;
+    return input;
+}
+
+int main(int argc, char **argv) {
+    if (argc != 2) {
+        printf("error: expected file path\n");
+        exit(-1);
+    }
+
+    const char *filepath = argv[1];
+
+    char *input = ReadEntireFile(filepath);
 
     Parser parser = StartParsing(input, strlen(input));
+
     Memory memory;
     memset(&memory, 0, sizeof(memory));
+
     while (Parsing(&parser)) {
         ExprNode* expr = ParseRootExpression(&parser);
         PrintExpr(expr, 0);
