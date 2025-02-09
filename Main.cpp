@@ -5,6 +5,7 @@
 #include <ctype.h>
 
 #define MAX_IDENTIFIER_SIZE 128
+#define MAX_VARIABLE_COUNT 1024
 
 enum TokenKind {
     TokenKind_Invalid,
@@ -473,7 +474,7 @@ struct Variable {
 };
 struct Memory {
     double Ans;
-    Variable Vars[1024]; 
+    Variable Vars[MAX_VARIABLE_COUNT]; 
     int VariableCount;
 };
 
@@ -482,7 +483,7 @@ double Evaluate(ExprNode* expr, Memory *mem) {
         return expr->SrcToken.Number;
     }
     else if (expr->Kind == ExprKind_Identifier) {
-        for (int iter = 0; iter <= 1024; iter++) {
+        for (int iter = 0; iter <= MAX_VARIABLE_COUNT; iter++) {
             if (!strcmp(expr->SrcToken.Identifier, mem->Vars[iter].Name)) {
                 return mem->Vars[iter].Value;
             }
@@ -556,7 +557,7 @@ Parser StartParsing(const char *str, int length) {
 }
 
 int main() {
-    const char* input = "a=3 * (2 + 1)+b;  b=4 * 2+a;";
+    const char* input = "a=3 * (2 + 1);  b=4 * 2+a;";
 
     Parser parser = StartParsing(input, strlen(input));
     Memory memory;
