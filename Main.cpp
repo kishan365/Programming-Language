@@ -385,6 +385,10 @@ ExprNode* ParseExpression(Parser* parser, bool start, int prev_prec) {
         if (start) {
             Token token = {};
             if (AcceptToken(parser, TokenKind_Equal, &token)) {
+                if (left->Kind != ExprKind_Identifier) {
+                    printf("The left side of the assignment should be an identifier\n");
+                    exit(-1);
+                }
                 ExprNode* expr = ExprNodeCreate(ExprKind_Assignment);
                 expr->Left = left;
                 expr->Right = ParseExpression(parser, false, -1);
@@ -544,10 +548,6 @@ double Evaluate(ExprNode* expr, Memory *mem) {
         }
     }
     else if (expr->Kind == ExprKind_Assignment) {
-        if (expr->Left->SrcToken.Kind != TokenKind_Identifier) {
-            printf("Left side of the Assignment can only be of variable type\n");
-            exit(-1);
-        }
         Variable* var = GetVariable(mem, expr->Left->SrcToken.Identifier);
         var->Value = Evaluate(expr->Right,mem);
         return var->Value;
