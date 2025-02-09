@@ -4,6 +4,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <float.h>
+#include <math.h>
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////// Tokenizer  //////////////////////////////////////
@@ -271,10 +272,36 @@ enum ExprKind {
     ExprKind_Assignment,
     ExprKind_Number,
     ExprKind_Identifier,
-    ExprKind_Function
+    ExprKind_BuiltinFunc
 };
 
 struct ExprNode;
+
+enum BuiltinFunc {
+    BuiltinFunc_Sum,
+    BuiltinFunc_Mul,
+    BuiltinFunc_Min,
+    BuiltinFunc_Max,
+    BuiltinFunc_Sin,
+    BuiltinFunc_Cos,
+    BuiltinFunc_Tan,
+    BuiltinFunc_Count,
+};
+
+struct BuiltinFuncDesc {
+    const char *Name;
+    int ArgCount;
+};
+
+static BuiltinFuncDesc BuiltinFuncDescs[] = { 
+    { "sum", -1 },
+    { "mul", -1 },
+    { "min", -1 },
+    { "max", -1 },
+    { "sin", 1 },
+    { "cos", 1 }, 
+    { "tan", 1 },
+};
 
 struct FunctionArguments {
     ExprNode *Args[MAX_ARGUMENT_COUNT];
@@ -286,7 +313,8 @@ struct ExprNode {
     Token SrcToken;
     ExprNode *Left;
     ExprNode *Right;
-    FunctionArguments Args;
+    BuiltinFunc Func;
+    FunctionArguments FuncArgs;
     BinaryOperatorKind BinaryOperator;
     UnaryOperatorKind UnaryOperator;
 };
@@ -392,8 +420,32 @@ ExprNode *ParseSubexpression(Parser *parser, bool start) {
 
     if (AcceptToken(parser, TokenKind_Identifier, &token)) {
         if (ExpectToken(parser, TokenKind_OpenBrace)) {
-            ExprNode *expr = ExprNodeCreate(ExprKind_Function, token);
-            expr->Args = ParseFunctionArguments(parser);
+            BuiltinFuncDesc *desc = NULL;
+            BuiltinFunc func = BuiltinFunc_Sum;
+
+            for (int iter = 0; iter < BuiltinFunc_Count; ++iter) {
+                if (!strcmp(BuiltinFuncDescs[iter].Name, token.Identifier)) {
+                    desc = &BuiltinFuncDescs[iter];
+                    func = (BuiltinFunc)iter;
+                    break;
+                }
+            }
+
+            if (!desc) {
+                printf("%s function is undefined\n", token.Identifier);
+                exit(-1);
+            }
+
+            ExprNode *expr = ExprNodeCreate(ExprKind_BuiltinFunc, token);
+            expr->FuncArgs = ParseFunctionArguments(parser);
+            expr->Func = func;
+
+            if (desc->ArgCount != -1 && desc->ArgCount != expr->FuncArgs.Count) {
+                printf("expected %d number of arguments but got %d arguments for function %s\n",
+                    desc->ArgCount, expr->FuncArgs.Count, desc->Name);
+                exit(-1);
+            }
+
             if (!ExpectToken(parser, TokenKind_CloseBrace)) {
                 printf("expected close brace\n");
                 exit(-1);
@@ -533,10 +585,10 @@ void PrintExpr(ExprNode *expr, int indent) {
         return;
     }
 
-    if (expr->Kind == ExprKind_Function) {
+    if (expr->Kind == ExprKind_BuiltinFunc) {
         printf("Function: %s\n", expr->SrcToken.Identifier);
-        for (int iter = 0; iter < expr->Args.Count; ++iter)
-            PrintExpr(expr->Args.Args[iter], indent + 1);
+        for (int iter = 0; iter < expr->FuncArgs.Count; ++iter)
+            PrintExpr(expr->FuncArgs.Args[iter], indent + 1);
         return;
     }
 
@@ -616,20 +668,31 @@ double Max(FunctionArguments *args, Memory *mem) {
     return d;
 }
 
-double EvaluateFunction(ExprNode *expr, Memory *mem) {
-    char *name = expr->SrcToken.Identifier;
-    if (!strcmp(name, "sum")) {
-        return Sum(&expr->Args, mem);
-    } else if (!strcmp(name, "mul")) {
-        return Mul(&expr->Args, mem);
-    } else if (!strcmp(name, "min")) {
-        return Min(&expr->Args, mem);
-    } else if (!strcmp(name, "max")) {
-        return Max(&expr->Args, mem);
-    } else {
-        printf("%s function is not supported\n", name);
-        exit(-1);
-    }
+double Sin(FunctionArguments *args, Memory *mem) {
+    double d = Evaluate(args->Args[0], mem);
+    return sin(d);
+}
+
+double Cos(FunctionArguments *args, Memory *mem) {
+    double d = Evaluate(args->Args[0], mem);
+    return cos(d);
+}
+
+double Tan(FunctionArguments *args, Memory *mem) {
+    double d = Evaluate(args->Args[0], mem);
+    return tan(d);
+}
+
+typedef double (*EvaluateBuiltinFunc)(FunctionArguments *, Memory *);
+
+static EvaluateBuiltinFunc BuildinFuncEvaluateTable[] = {
+    Sum, Mul, Min, Max, Sin, Cos, Tan
+};
+
+double EvaluateBuildinFunction(ExprNode *expr, Memory *mem) {
+    if (expr->Func < ArrayCount(BuildinFuncEvaluateTable))
+        return BuildinFuncEvaluateTable[expr->Func](&expr->FuncArgs, mem);
+    printf("TODO\n");
 }
 
 double Evaluate(ExprNode *expr, Memory *mem) {
@@ -680,8 +743,8 @@ double Evaluate(ExprNode *expr, Memory *mem) {
         return var->Value;
     }
 
-    if (expr->Kind == ExprKind_Function) {
-        return EvaluateFunction(expr, mem);
+    if (expr->Kind == ExprKind_BuiltinFunc) {
+        return EvaluateBuildinFunction(expr, mem);
     }
 
     printf("TODO\n");
@@ -692,7 +755,7 @@ void EvaluateRootExpr(ExprNode *expr, Memory *mem) {
 }
 
 int main() {
-    const char *input = "a=5; b=2; max(sum(1, 2, 3),b+1);";
+    const char *input = "a=5; b=2; max(sum(1, 2, 3),b+1); sin(3.14);";
 
     Parser parser = StartParsing(input, strlen(input));
 
