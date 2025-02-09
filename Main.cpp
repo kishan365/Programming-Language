@@ -3,9 +3,13 @@
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
+#include <float.h>
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////// Tokenizer  //////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
 
 #define MAX_IDENTIFIER_SIZE 128
-#define MAX_VARIABLE_COUNT 1024
 
 enum TokenKind {
     TokenKind_Invalid,
@@ -202,6 +206,13 @@ void PrintToken(const Token *token) {
     printf("\n");
 }
 
+//////////////////////////////////////////////////////////////////////////
+/////////////////////////  Parser  ///////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+
+#define MAX_VARIABLE_COUNT 1024
+#define MAX_ARGUMENT_COUNT 64
+
 enum BinaryOperatorKind {
     BinaryOperator_Plus,
     BinaryOperator_Minus,
@@ -263,19 +274,27 @@ enum ExprKind {
     ExprKind_Function
 };
 
+struct ExprNode;
+
+struct FunctionArguments {
+    ExprNode *Args[MAX_ARGUMENT_COUNT];
+    int Count;
+};
+
 struct ExprNode {
     ExprKind Kind;
+    Token SrcToken;
     ExprNode *Left;
     ExprNode *Right;
+    FunctionArguments Args;
     BinaryOperatorKind BinaryOperator;
     UnaryOperatorKind UnaryOperator;
-    Token SrcToken;
 };
 
 static ExprNode ExprNodeBuffers[8192];
 static int ExprNodePos = 0;
 
-ExprNode *ExprNodeCreate(ExprKind kind) {
+ExprNode *ExprNodeCreate(ExprKind kind, Token token) {
     if (ExprNodePos == ArrayCount(ExprNodeBuffers)) {
         printf("error: out of memory");
         exit(1);
@@ -285,6 +304,7 @@ ExprNode *ExprNodeCreate(ExprKind kind) {
     ExprNodePos++;
     memset(node, 0, sizeof(*node));
     node->Kind = kind;
+    node->SrcToken = token;
     return node;
 }
 
@@ -301,14 +321,18 @@ struct Parser {
 bool Parsing(Parser *parser) {
     return parser->Parsing;
 }
-struct Function {
-    char Name[MAX_IDENTIFIER_SIZE];
-    double Value[50];
-    int ArgLength;
-};
 
 void AdvanceToken(Parser *parser) {
     parser->Parsing = Tokenize(&parser->Lex, &parser->Current);
+}
+
+Parser StartParsing(const char *str, int length) {
+    Parser parser = {};
+    parser.Lex.Input = str;
+    parser.Lex.Position = 0;
+    parser.Lex.Length = length;
+    AdvanceToken(&parser);
+    return parser;
 }
 
 Token GetCurrentToken(Parser *parser) {
@@ -333,57 +357,56 @@ bool ExpectToken(Parser *parser, TokenKind kind) {
     return AcceptToken(parser, kind, &token);
 }
 
-struct Variable {
-    char Name[MAX_IDENTIFIER_SIZE];
-    double Value;
-};
-struct Memory {
-    double Ans;
-    Variable Vars[MAX_VARIABLE_COUNT];
-    int VariableCount;
-};
+ExprNode *ParseExpression(Parser *parser, bool start, int prec);
 
-Variable *SearchVar(Memory *mem, char *varName) {
-    for (int iter = 0; iter < mem->VariableCount; iter++) {
-        if (!strcmp(varName, mem->Vars[iter].Name)) {
-            return &mem->Vars[iter];
-        }
-    }
-    return NULL;
-}
+FunctionArguments ParseFunctionArguments(Parser *parser) {
+    FunctionArguments args;
+    memset(&args, 0, sizeof(args));
 
-Variable *GetVariable(Memory *mem, char *varName) {
-    Variable *var = SearchVar(mem, varName);
-    if (!var) {
-        if (mem->VariableCount == MAX_VARIABLE_COUNT) {
-            printf("Out of Memory. Cannot create new variable\n");
+    if (PeekToken(parser, TokenKind_CloseBrace))
+        return args;
+
+    while (Parsing(parser)) {
+        if (args.Count == MAX_ARGUMENT_COUNT) {
+            printf("too many parameters in function\n");
             exit(-1);
         }
-        strcpy_s(mem->Vars[mem->VariableCount].Name, varName);
-        var = &mem->Vars[mem->VariableCount++];
+
+        args.Args[args.Count] = ParseExpression(parser, true, -1);
+        args.Count += 1;
+
+        if (!ExpectToken(parser, TokenKind_Comma))
+            break;
     }
-    return var;
+
+    return args;
 }
 
-ExprNode *ParseExpression(Parser *parser, bool start, int prec, Function *func, Memory *mem);
-
-ExprNode *ParseSubexpression(Parser *parser, bool start, Function *func, Memory *mem) {
+ExprNode *ParseSubexpression(Parser *parser, bool start) {
     Token token = {};
 
     if (AcceptToken(parser, TokenKind_Number, &token)) {
-        ExprNode *expr = ExprNodeCreate(ExprKind_Number);
-        expr->SrcToken = token;
+        ExprNode *expr = ExprNodeCreate(ExprKind_Number, token);
         return expr;
     }
 
     if (AcceptToken(parser, TokenKind_Identifier, &token)) {
-        ExprNode *expr = ExprNodeCreate(ExprKind_Identifier);
-        expr->SrcToken = token;
-        return expr;
+        if (ExpectToken(parser, TokenKind_OpenBrace)) {
+            ExprNode *expr = ExprNodeCreate(ExprKind_Function, token);
+            expr->Args = ParseFunctionArguments(parser);
+            if (!ExpectToken(parser, TokenKind_CloseBrace)) {
+                printf("expected close brace\n");
+                exit(-1);
+            }
+            return expr;
+        } else {
+            ExprNode *expr = ExprNodeCreate(ExprKind_Identifier, token);
+            return expr;
+        }
     }
 
-    if (ExpectToken(parser, TokenKind_OpenBrace)) {//For this there will be two possibilities
-        ExprNode *expr = ParseExpression(parser, true, -1, func, mem);
+    if (ExpectToken(parser, TokenKind_OpenBrace)) {
+        ExprNode *expr = ParseExpression(parser, true, -1);
         if (!ExpectToken(parser, TokenKind_CloseBrace)) {
             printf("error: expected close brace\n");
             exit(1);
@@ -394,10 +417,9 @@ ExprNode *ParseSubexpression(Parser *parser, bool start, Function *func, Memory 
     if (start) {
         for (int iter = 0; iter < ArrayCount(UnaryOperatorStartInput); ++iter) {
             if (AcceptToken(parser, UnaryOperatorStartInput[iter], &token)) {
-                ExprNode *expr = ExprNodeCreate(ExprKind_UnaryOperator);
-                expr->Left = ParseSubexpression(parser, false, func, mem);
+                ExprNode *expr = ExprNodeCreate(ExprKind_UnaryOperator, token);
+                expr->Left = ParseSubexpression(parser, false);
                 expr->UnaryOperator = UnaryOperatorStartOutput[iter];
-                expr->SrcToken = token;
                 return expr;
             }
         }
@@ -405,10 +427,9 @@ ExprNode *ParseSubexpression(Parser *parser, bool start, Function *func, Memory 
 
     for (int iter = 0; iter < ArrayCount(UnaryOperatorInput); ++iter) {
         if (AcceptToken(parser, UnaryOperatorInput[iter], &token)) {
-            ExprNode *expr = ExprNodeCreate(ExprKind_UnaryOperator);
-            expr->Left = ParseSubexpression(parser, false, func, mem);
+            ExprNode *expr = ExprNodeCreate(ExprKind_UnaryOperator, token);
+            expr->Left = ParseSubexpression(parser, false);
             expr->UnaryOperator = UnaryOperatorStartOutput[iter];
-            expr->SrcToken = token;
             return expr;
         }
     }
@@ -416,17 +437,10 @@ ExprNode *ParseSubexpression(Parser *parser, bool start, Function *func, Memory 
     printf("error: expected operand\n");
     exit(1);
 }
-ExprNode *ParseFunction(Parser *parser, bool start, ExprNode *funcExpr, Function *func, Memory *mem);
-ExprNode *ParseExpression(Parser *parser, bool start, int prev_prec, Function *func, Memory *mem) {
-    ExprNode *left = ParseSubexpression(parser, true, func, mem);
-    if (left->Kind == ExprKind_Identifier) {
-        if (PeekToken(parser, TokenKind_OpenBrace)) {
-            ExprNode *funcExpr = ExprNodeCreate(ExprKind_Function);
-            strcpy_s(func->Name, left->SrcToken.Identifier);
-            ParseFunction(parser, start, funcExpr, func, mem);
-            return funcExpr;
-        }
-    }
+
+ExprNode *ParseExpression(Parser *parser, bool start, int prev_prec) {
+    ExprNode *left = ParseSubexpression(parser, true);
+
     while (Parsing(parser)) {
         if (start) {
             Token token = {};
@@ -435,10 +449,9 @@ ExprNode *ParseExpression(Parser *parser, bool start, int prev_prec, Function *f
                     printf("The left side of the assignment should be an identifier\n");
                     exit(-1);
                 }
-                ExprNode *expr = ExprNodeCreate(ExprKind_Assignment);
+                ExprNode *expr = ExprNodeCreate(ExprKind_Assignment, token);
                 expr->Left = left;
-                expr->Right = ParseExpression(parser, false, -1, func, mem);
-                expr->SrcToken = token;
+                expr->Right = ParseExpression(parser, false, -1);
                 return expr;
             }
         }
@@ -458,14 +471,13 @@ ExprNode *ParseExpression(Parser *parser, bool start, int prev_prec, Function *f
         if (binary_op == -1 || prec <= prev_prec)
             break;
 
-        ExprNode *expr = ExprNodeCreate(ExprKind_BinaryOperator);
+        ExprNode *expr = ExprNodeCreate(ExprKind_BinaryOperator, GetCurrentToken(parser));
         expr->Left = left;
         expr->BinaryOperator = BinaryOperatorOutput[binary_op];
-        expr->SrcToken = GetCurrentToken(parser);
 
         AdvanceToken(parser);
 
-        expr->Right = ParseExpression(parser, false, prec, func, mem);
+        expr->Right = ParseExpression(parser, false, prec);
 
         left = expr;
     }
@@ -473,8 +485,8 @@ ExprNode *ParseExpression(Parser *parser, bool start, int prev_prec, Function *f
     return left;
 }
 
-ExprNode *ParseRootExpression(Parser *parser, Function *func, Memory *mem) {
-    ExprNode *expr = ParseExpression(parser, true, -1, func, mem);
+ExprNode *ParseRootExpression(Parser *parser) {
+    ExprNode *expr = ParseExpression(parser, true, -1);
     if (!ExpectToken(parser, TokenKind_Semicolon)) {
         printf("error: expected semicolon\n");
         exit(1);
@@ -482,104 +494,9 @@ ExprNode *ParseRootExpression(Parser *parser, Function *func, Memory *mem) {
     return expr;
 }
 
-
-
-char *AppendName(const char *input, const char *postAppendString) {
-    char newName[MAX_IDENTIFIER_SIZE];
-    memset(newName, 0, sizeof(newName[MAX_IDENTIFIER_SIZE]));
-    int i = 0;
-    for (; i < strlen(input); i++) {
-        newName[i] = input[i];
-    }
-    while (i < (strlen(input) + strlen(postAppendString))) {
-        newName[i] = postAppendString[i];
-    }
-    return newName;
-}
-
-ExprNode *ParseFunction(Parser *parser, bool start, ExprNode *funcExpr, Function *func, Memory *mem) {
-    Token token;
-
-    if (!ExpectToken(parser, TokenKind_OpenBrace)) {
-        printf("Function name should be followed by Open Brace\n");
-        exit(-1);
-    }
-    if (!ExpectToken(parser, TokenKind_CloseBrace)) {
-        for (int iter = 0;; iter++) {
-            funcExpr->Left = ParseSubexpression(parser, true, func, mem);
-            if (funcExpr->Left->Kind == ExprKind_Identifier || funcExpr->Left->Kind == ExprKind_Number) {
-                if (funcExpr->Left->Kind == ExprKind_Identifier) {
-                    func->Value[func->ArgLength++] = SearchVar(mem, funcExpr->Left->SrcToken.Identifier)->Value;
-                } else if (funcExpr->Left->Kind == ExprKind_Number) {
-                    func->Value[func->ArgLength++] = parser->Current.Number;
-                }
-                if (func->ArgLength >= 50) {
-                    printf("Only upto 50 arguments are supported\n");
-                    exit(-1);
-                }
-                if (ExpectToken(parser, TokenKind_Comma)) {
-                    funcExpr = funcExpr->Left;
-                    continue;
-                } else if (!ExpectToken(parser, TokenKind_CloseBrace)) {
-                    printf("Expected Close Brace\n");
-                    exit(-1);
-                }
-                return funcExpr;
-                //I am thinking to eliminate the usuage of semicolon.
-            } else {
-                printf("Expected arguments are either Variables or Numbers\n");
-                exit(-1);
-            }
-        }
-
-    } else if (ExpectToken(parser, TokenKind_CloseBrace)) {
-        return funcExpr;
-    }
-    printf("Expected Close Braces\n");
-    exit(-1);
-}
-double Sum(Function func) {
-    double d = 0;
-    for (int iter = 0; iter < func.ArgLength; iter++) {
-        d = d + func.Value[iter];
-    }
-    return d;
-}
-double Sub(Function func) {
-    double d = func.Value[0];
-    for (int iter = 1; iter < func.ArgLength; iter++) {
-        d = d - func.Value[iter];
-    }
-    return d;
-}double Mul(Function func) {
-    double d = 1;
-    for (int iter = 0; iter < func.ArgLength; iter++) {
-        d = d * func.Value[iter];
-    }
-    return d;
-}double Div(Function func) {
-    double d = 1;
-    for (int iter = 0; iter < func.ArgLength; iter++) {
-        d = d / func.Value[iter];
-    }
-    return d;
-}
-void checkFunction(Function *func, Memory *mem) {
-    if (!strcmp(func->Name, "sum")) {
-        mem->Ans = Sum(*func);
-    } else if (!strcmp(func->Name, "sub")) {
-        mem->Ans = Sub(*func);
-    } else if (!strcmp(func->Name, "mul")) {
-        mem->Ans = Mul(*func);
-    } else if (!strcmp(func->Name, "div")) {
-        mem->Ans = Div(*func);
-    } else {
-        printf("%s function is not supported yet\n", func->Name);
-        exit(-1);
-    }
-    func->ArgLength = 0;
-
-}
+//////////////////////////////////////////////////////////////////////////
+/////////////////////////  Print  ////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
 
 void PrintExpr(ExprNode *expr, int indent) {
     for (int iter = 0; iter < indent; ++iter) {
@@ -615,30 +532,134 @@ void PrintExpr(ExprNode *expr, int indent) {
         PrintExpr(expr->Right, indent + 1);
         return;
     }
+
+    if (expr->Kind == ExprKind_Function) {
+        printf("Function: %s\n", expr->SrcToken.Identifier);
+        for (int iter = 0; iter < expr->Args.Count; ++iter)
+            PrintExpr(expr->Args.Args[iter], indent + 1);
+        return;
+    }
+
+    printf("TODO\n");
 }
 
-double Evaluate(ExprNode *expr, Function *func, Memory *mem) {
+//////////////////////////////////////////////////////////////////////////
+/////////////////////////  Evalute  //////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+
+struct Variable {
+    char Name[MAX_IDENTIFIER_SIZE];
+    double Value;
+};
+
+struct Memory {
+    double Ans;
+    Variable Vars[MAX_VARIABLE_COUNT];
+    int VariableCount;
+};
+
+Variable *SearchVar(Memory *mem, char *varName) {
+    for (int iter = 0; iter < mem->VariableCount; iter++) {
+        if (!strcmp(varName, mem->Vars[iter].Name)) {
+            return &mem->Vars[iter];
+        }
+    }
+    return NULL;
+}
+
+Variable *GetVariable(Memory *mem, char *varName) {
+    Variable *var = SearchVar(mem, varName);
+    if (!var) {
+        if (mem->VariableCount == MAX_VARIABLE_COUNT) {
+            printf("Out of Memory. Cannot create new variable\n");
+            exit(-1);
+        }
+        strcpy_s(mem->Vars[mem->VariableCount].Name, varName);
+        var = &mem->Vars[mem->VariableCount++];
+    }
+    return var;
+}
+
+double Evaluate(ExprNode *expr, Memory *mem);
+
+double Sum(FunctionArguments *args, Memory *mem) {
+    double d = 0;
+    for (int iter = 0; iter < args->Count; iter++) {
+        d += Evaluate(args->Args[iter], mem);
+    }
+    return d;
+}
+
+double Mul(FunctionArguments *args, Memory *mem) {
+    double d = 1;
+    for (int iter = 0; iter < args->Count; iter++) {
+        d *= Evaluate(args->Args[iter], mem);
+    }
+    return d;
+}
+
+double Min(FunctionArguments *args, Memory *mem) {
+    double d = DBL_MAX;
+    for (int iter = 0; iter < args->Count; iter++) {
+        double n = Evaluate(args->Args[iter], mem);
+        if (n < d) d = n;
+    }
+    return d;
+}
+
+double Max(FunctionArguments *args, Memory *mem) {
+    double d = DBL_MIN;
+    for (int iter = 0; iter < args->Count; iter++) {
+        double n = Evaluate(args->Args[iter], mem);
+        if (n > d) d = n;
+    }
+    return d;
+}
+
+double EvaluateFunction(ExprNode *expr, Memory *mem) {
+    char *name = expr->SrcToken.Identifier;
+    if (!strcmp(name, "sum")) {
+        return Sum(&expr->Args, mem);
+    } else if (!strcmp(name, "mul")) {
+        return Mul(&expr->Args, mem);
+    } else if (!strcmp(name, "min")) {
+        return Min(&expr->Args, mem);
+    } else if (!strcmp(name, "max")) {
+        return Max(&expr->Args, mem);
+    } else {
+        printf("%s function is not supported\n", name);
+        exit(-1);
+    }
+}
+
+double Evaluate(ExprNode *expr, Memory *mem) {
     if (expr->Kind == ExprKind_Number) {
         return expr->SrcToken.Number;
-    } else if (expr->Kind == ExprKind_Identifier) {
+    }
+
+    if (expr->Kind == ExprKind_Identifier) {
         Variable *var = SearchVar(mem, expr->SrcToken.Identifier);
         if (!var) {
             printf("Variable %s is not defined\n", expr->SrcToken.Identifier);
             exit(-1);
         }
         return var->Value;
-    } else if (expr->Kind == ExprKind_UnaryOperator) {
+    }
+
+    if (expr->Kind == ExprKind_UnaryOperator) {
         if (expr->UnaryOperator == UnaryOperator_Plus) {
-            return Evaluate(expr->Left, func, mem);
+            return Evaluate(expr->Left, mem);
         } else if (expr->UnaryOperator == UnaryOperator_Minus) {
-            return -Evaluate(expr->Left, func, mem);
+            return -Evaluate(expr->Left, mem);
         } else {
             printf("TODO\n");
             return 0;
         }
-    } else if (expr->Kind == ExprKind_BinaryOperator) {
-        double L = Evaluate(expr->Left, func, mem);
-        double R = Evaluate(expr->Right, func, mem);
+    }
+
+    if (expr->Kind == ExprKind_BinaryOperator) {
+        double L = Evaluate(expr->Left, mem);
+        double R = Evaluate(expr->Right, mem);
         if (expr->BinaryOperator == BinaryOperator_Plus) {
             return (L + R);
         } else if (expr->BinaryOperator == BinaryOperator_Minus) {
@@ -651,45 +672,37 @@ double Evaluate(ExprNode *expr, Function *func, Memory *mem) {
             printf("TODO\n");
             return 0;
         }
-    } else if (expr->Kind == ExprKind_Assignment) {
+    }
+
+    if (expr->Kind == ExprKind_Assignment) {
         Variable *var = GetVariable(mem, expr->Left->SrcToken.Identifier);
-        var->Value = Evaluate(expr->Right, func, mem);
+        var->Value = Evaluate(expr->Right, mem);
         return var->Value;
     }
-    else if (expr->Kind == ExprKind_Function) {
-        checkFunction(func, mem);
-        return mem->Ans;
-    } else {
-        printf("TODO\n");
-        return 0;
+
+    if (expr->Kind == ExprKind_Function) {
+        return EvaluateFunction(expr, mem);
     }
+
+    printf("TODO\n");
 }
 
-void EvaluateRootExpr(ExprNode *expr, Function *func, Memory *mem) {
-    mem->Ans = Evaluate(expr, func, mem);
-}
-
-
-Parser StartParsing(const char *str, int length) {
-    Parser parser = {};
-    parser.Lex.Input = str;
-    parser.Lex.Position = 0;
-    parser.Lex.Length = length;
-    AdvanceToken(&parser);
-    return parser;
+void EvaluateRootExpr(ExprNode *expr, Memory *mem) {
+    mem->Ans = Evaluate(expr, mem);
 }
 
 int main() {
-    const char *input = "a=5; b=2; sum(a,b);";
+    const char *input = "a=5; b=2; max(sum(1, 2, 3),b+1);";
+
     Parser parser = StartParsing(input, strlen(input));
+
     Memory memory;
-    Function func;
-    memset(&func, 0, sizeof(func));
     memset(&memory, 0, sizeof(memory));
+
     while (Parsing(&parser)) {
-        ExprNode *expr = ParseRootExpression(&parser, &func, &memory);
+        ExprNode *expr = ParseRootExpression(&parser);
         PrintExpr(expr, 0);
-        EvaluateRootExpr(expr, &func, &memory);
+        EvaluateRootExpr(expr, &memory);
         ExprNodeReset();
         printf("Result = %f\n", memory.Ans);
         printf("=================================================================================\n");
