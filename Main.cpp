@@ -478,18 +478,38 @@ struct Memory {
     int VariableCount;
 };
 
+Variable* SearchVar(Memory* mem, char* varName) {
+    for (int iter = 0; iter < mem->VariableCount; iter++) {
+        if (!strcmp(varName , mem->Vars[iter].Name)) {
+            return &mem->Vars[iter];
+        }
+    }
+    return NULL;
+}
+Variable* GetVariable(Memory* mem, char* varName) {
+    Variable* var = SearchVar(mem, varName);
+    if (!var) {
+        if (mem->VariableCount == MAX_VARIABLE_COUNT) {
+            printf("Out of Memory. Cannot create new variable\n");
+            exit(-1);
+        }
+        strcpy_s(mem->Vars[mem->VariableCount].Name, varName);
+        var = &mem->Vars[mem->VariableCount++];
+    }
+    return var;
+}
+
 double Evaluate(ExprNode* expr, Memory *mem) {
     if (expr->Kind == ExprKind_Number) {
         return expr->SrcToken.Number;
     }
     else if (expr->Kind == ExprKind_Identifier) {
-        for (int iter = 0; iter <= MAX_VARIABLE_COUNT; iter++) {
-            if (!strcmp(expr->SrcToken.Identifier, mem->Vars[iter].Name)) {
-                return mem->Vars[iter].Value;
-            }
+        Variable* var = SearchVar(mem, expr->SrcToken.Identifier);
+        if (!var) {
+            printf("Variable %s is not defined\n",expr->SrcToken.Identifier);
+            exit(-1);
         }
-        printf("The variable %s is undefined\n",expr->SrcToken.Identifier);
-        exit(-1);
+        return var->Value;
     }
     else if (expr->Kind == ExprKind_UnaryOperator) {
         if (expr->UnaryOperator == UnaryOperator_Plus) {
@@ -524,17 +544,13 @@ double Evaluate(ExprNode* expr, Memory *mem) {
         }
     }
     else if (expr->Kind == ExprKind_Assignment) {
-        //do it 
-
-        //Here there will be the left and right child for the assignment.
-        //the left side is always the variabel 
         if (expr->Left->SrcToken.Kind != TokenKind_Identifier) {
             printf("Left side of the Assignment can only be of variable type\n");
             exit(-1);
         }
-        strcpy_s(mem->Vars[mem->VariableCount].Name , expr->Left->SrcToken.Identifier);
-        mem->Vars[mem->VariableCount].Value = Evaluate(expr->Right,mem);
-        return mem->Vars[mem->VariableCount++].Value;
+        Variable* var = GetVariable(mem, expr->Left->SrcToken.Identifier);
+        var->Value = Evaluate(expr->Right,mem);
+        return var->Value;
     }
     else {
         printf("TODO\n");
