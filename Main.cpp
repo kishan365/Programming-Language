@@ -215,7 +215,12 @@ void PrintToken(const Token *token) {
     printf("    %s ", TokenNames[token->Kind]);
 
     if (token->Kind == TokenKind_Number) {
-        printf("(%f)", token->Number);
+        if (token->Number.Kind == NumberKind_Float) {
+            printf("(%f)", token->Number.Float);
+        }
+        else {
+            printf("%d", token->Number.Int);
+        }
     } else if (token->Kind == TokenKind_Identifier) {
         printf("(%s)", token->Identifier);
     }
@@ -282,13 +287,24 @@ const UnaryOperatorKind UnaryOperatorOutput[] = {
     UnaryOperator_BitwiseNot,
 };
 
+const TokenKind BitwiseOperatorInput[] = {
+    TokenKind_BitwiseAnd,
+    TokenKind_BitwiseOr,
+};
+
+const UnaryOperatorKind BitwiseOperatorOutput[] = {
+    UnaryOperator_Plus,
+    UnaryOperator_Minus,
+};
+
 enum ExprKind {
     ExprKind_BinaryOperator,
     ExprKind_UnaryOperator,
     ExprKind_Assignment,
     ExprKind_Number,
     ExprKind_Identifier,
-    ExprKind_BuiltinFunc
+    ExprKind_BuiltinFunc,
+    ExprKind_BitwiseOperator,
 };
 
 struct ExprNode;
@@ -492,7 +508,7 @@ ExprNode *ParseSubexpression(Parser *parser, bool start) {
             }
         }
     }
-
+    //-&a a=a&b; 
     for (int iter = 0; iter < ArrayCount(UnaryOperatorInput); ++iter) {
         if (AcceptToken(parser, UnaryOperatorInput[iter], &token)) {
             ExprNode *expr = ExprNodeCreate(ExprKind_UnaryOperator, token);
@@ -508,6 +524,7 @@ ExprNode *ParseSubexpression(Parser *parser, bool start) {
 
 ExprNode *ParseExpression(Parser *parser, bool start, int prev_prec) {
     ExprNode *left = ParseSubexpression(parser, true);
+    
 
     while (Parsing(parser)) {
         if (start) {
@@ -548,6 +565,16 @@ ExprNode *ParseExpression(Parser *parser, bool start, int prev_prec) {
         expr->Right = ParseExpression(parser, false, prec);
 
         left = expr;
+    }
+    for (int iter = 0; iter < ArrayCount(BitwiseOperatorInput); iter++) {
+        if (PeekToken(parser, BitwiseOperatorInput[iter])) {
+            Token tok = GetCurrentToken(parser);
+            ExprNode *expr = ExprNodeCreate(ExprKind_BitwiseOperator, tok);
+            expr->Left = left;
+            AdvanceToken(parser);
+            expr->Right = ParseSubexpression(parser, true);
+            return expr;
+        }
     }
 
     return left;
@@ -825,6 +852,22 @@ NumericValue Evaluate(ExprNode *expr, Memory *mem) {
         return EvaluateBuildinFunction(expr, mem);
     }
 
+    if (expr->Kind == ExprKind_BitwiseOperator) {
+        NumericValue L = Evaluate(expr->Left, mem);
+        NumericValue R = Evaluate(expr->Right, mem);
+        NumericValue eval = {};
+        if (expr->SrcToken.Kind == TokenKind_BitwiseAnd) {
+            eval.Int = L.Int & R.Int;
+            eval.Float = L.Int & R.Int; //Float values are not supported for this operation
+        }
+        else if (expr->SrcToken.Kind == TokenKind_BitwiseOr) {
+            eval.Int = L.Int | R.Int;
+            eval.Float = L.Int | R.Int; //Float values are not supported for this operation
+        }
+        eval.Kind = L.Kind != R.Kind ? NumberKind_Float : L.Kind;
+        return eval;
+    }
+
     printf("TODO\n");
 }
 
@@ -882,3 +925,10 @@ int main(int argc, char **argv) {
 
     return 0;
 }
+/*
+Now what I need to do is that I need to create the support for the binary operators like && , || and == 
+first lets start with the support of the urinary operator then it will be easy
+x = 2 & 2;
+Urinary Operator ko lagi herum k k hudai xa 
+
+*/
