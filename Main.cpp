@@ -32,6 +32,7 @@ enum TokenKind {
     TokenKind_EqualEqual, // ==
     TokenKind_Or,         // ||
     TokenKind_And,        // &&
+    TokenKind_DoubleQuotation,
 };
 
 const char *TokenNames[] = {
@@ -41,12 +42,14 @@ const char *TokenNames[] = {
 enum NumberKind {
     NumberKind_Int,
     NumberKind_Float,
+    NumberKind_Char,
 };
 
 struct NumericValue {
     NumberKind Kind;
     int64_t Int;
     double Float;
+    char Identifier[MAX_IDENTIFIER_SIZE];
 };
 
 struct Token {
@@ -204,6 +207,22 @@ bool Tokenize(Tokenizer *tokenizer, Token *token) {
 
         return true;
     }
+    if(a == '\"'){
+            tokenizer->Position++;
+            for (int iter = 0; tokenizer->Position < tokenizer->Length; iter++) {
+                if ((tokenizer->Input[tokenizer->Position] == '\"')) {
+                    tokenizer->Position ++;
+                    token->Kind = TokenKind_DoubleQuotation;
+                    return true;
+                }
+                token->Identifier[iter] = tokenizer->Input[tokenizer->Position];
+                tokenizer->Position++;
+            }
+    }
+    /*
+    Her hai tokenize le k garxa vanedekhi haina it will separate the tokens from the input and then parse 
+    But during this condition we do not want to separate the tokens and use as it is;
+    */
 
     printf("invalid character: %c\n", a);
     exit(1);
@@ -235,6 +254,8 @@ enum BinaryOperatorKind {
     BinaryOperator_Minus,
     BinaryOperator_Multiply,
     BinaryOperator_Divide,
+    BinaryOperator_BitwiseAnd,
+    BinaryOperator_BitwiseOr,
 };
 
 const TokenKind BinaryOperatorInput[] = {
@@ -242,6 +263,8 @@ const TokenKind BinaryOperatorInput[] = {
     TokenKind_Minus,
     TokenKind_Multiply,
     TokenKind_Divide,
+    TokenKind_BitwiseAnd,
+    TokenKind_BitwiseOr,
 };
 
 const BinaryOperatorKind BinaryOperatorOutput[] = {
@@ -249,13 +272,17 @@ const BinaryOperatorKind BinaryOperatorOutput[] = {
     BinaryOperator_Minus,
     BinaryOperator_Multiply,
     BinaryOperator_Divide,
+    BinaryOperator_BitwiseAnd,
+    BinaryOperator_BitwiseOr,
 };
 
 const int BinaryOperatorPrecedence[] = {
-    0,
-    0,
     1,
     1,
+    2,
+    2,
+    0,
+    0
 };
 
 enum UnaryOperatorKind {
@@ -288,7 +315,8 @@ enum ExprKind {
     ExprKind_Assignment,
     ExprKind_Number,
     ExprKind_Identifier,
-    ExprKind_BuiltinFunc
+    ExprKind_BuiltinFunc,
+    ExprKind_DoubleQuotation,
 };
 
 struct ExprNode;
@@ -301,6 +329,7 @@ enum BuiltinFunc {
     BuiltinFunc_Sin,
     BuiltinFunc_Cos,
     BuiltinFunc_Tan,
+    BuiltinFunc_Print,
     BuiltinFunc_Count,
 };
 
@@ -317,6 +346,7 @@ static BuiltinFuncDesc BuiltinFuncDescs[] = {
     { "sin", 1 },
     { "cos", 1 }, 
     { "tan", 1 },
+    {"print", -1},
 };
 
 struct FunctionArguments {
@@ -368,6 +398,7 @@ bool Parsing(Parser *parser) {
 
 void AdvanceToken(Parser *parser) {
     parser->Parsing = Tokenize(&parser->Lex, &parser->Current);
+    //Jaile pani yesle parser->Lex le next token point garira hunxa yesko matlab k ho vanedekhi ki parser->Current ma next token aauxa
 }
 
 Parser StartParsing(const char *str, int length) {
@@ -389,7 +420,7 @@ bool PeekToken(Parser *parser, TokenKind kind) {
 
 bool AcceptToken(Parser *parser, TokenKind kind, Token *token) {
     if (PeekToken(parser, kind)) {
-        *token = parser->Current;
+        *token = parser->Current;//This will hold the current token as the parser->curent will be updated on AdvanceToken call.
         AdvanceToken(parser);
         return true;
     }
@@ -433,6 +464,8 @@ ExprNode *ParseSubexpression(Parser *parser, bool start) {
         ExprNode *expr = ExprNodeCreate(ExprKind_Number, token);
         return expr;
     }
+    //yeti bela yo herna janxa ki position ma kun token xa vanera ani aile ta " xa ani k garxa tyaha janxa nai identifier ma 
+    //rakhdinxa sab value.
 
     if (AcceptToken(parser, TokenKind_Identifier, &token)) {
         if (ExpectToken(parser, TokenKind_OpenBrace)) {
@@ -500,6 +533,12 @@ ExprNode *ParseSubexpression(Parser *parser, bool start) {
             expr->UnaryOperator = UnaryOperatorStartOutput[iter];
             return expr;
         }
+    }
+    if (AcceptToken(parser, TokenKind_DoubleQuotation, &token)) {
+      //parser will contain the current token that has been parsed and the toekn will contain the previous token
+        //Here the previous token is TokenKind_DoubleQuotation
+        ExprNode *expr = ExprNodeCreate(ExprKind_DoubleQuotation, token);
+        return expr;
     }
 
     printf("error: expected operand\n");
@@ -655,7 +694,7 @@ Variable *GetVariable(Memory *mem, char *varName) {
 }
 
 NumericValue AddValue(NumericValue A, NumericValue B) {
-    NumericValue R;
+    NumericValue R = {};
     R.Int = A.Int + B.Int;
     R.Float = A.Float + B.Float;
     R.Kind = A.Kind != B.Kind ? NumberKind_Float : A.Kind;
@@ -663,7 +702,7 @@ NumericValue AddValue(NumericValue A, NumericValue B) {
 }
 
 NumericValue SubValue(NumericValue A, NumericValue B) {
-    NumericValue R;
+    NumericValue R = {};
     R.Int = A.Int - B.Int;
     R.Float = A.Float - B.Float;
     R.Kind = A.Kind != B.Kind ? NumberKind_Float : A.Kind;
@@ -671,7 +710,7 @@ NumericValue SubValue(NumericValue A, NumericValue B) {
 }
 
 NumericValue MulValue(NumericValue A, NumericValue B) {
-    NumericValue R;
+    NumericValue R = {};
     R.Int = A.Int * B.Int;
     R.Float = A.Float * B.Float;
     R.Kind = A.Kind != B.Kind ? NumberKind_Float : A.Kind;
@@ -679,7 +718,7 @@ NumericValue MulValue(NumericValue A, NumericValue B) {
 }
 
 NumericValue DivValue(NumericValue A, NumericValue B) {
-    NumericValue R;
+    NumericValue R = {};
     R.Int = A.Int / B.Int;
     R.Float = A.Float / B.Float;
     R.Kind = A.Kind != B.Kind ? NumberKind_Float : A.Kind;
@@ -697,7 +736,7 @@ NumericValue Sum(FunctionArguments *args, Memory *mem) {
 }
 
 NumericValue Mul(FunctionArguments *args, Memory *mem) {
-    NumericValue d ;
+    NumericValue d = {};
     d.Int = 1;
     d.Float = 1;
     d.Kind = NumberKind_Int;
@@ -708,7 +747,7 @@ NumericValue Mul(FunctionArguments *args, Memory *mem) {
 }
 
 NumericValue Min(FunctionArguments *args, Memory *mem) {
-    NumericValue d;
+    NumericValue d = {};
     d.Float= DBL_MAX;
     d.Int = INT64_MAX;
     d.Kind = NumberKind_Int;
@@ -720,7 +759,7 @@ NumericValue Min(FunctionArguments *args, Memory *mem) {
 }
 
 NumericValue Max(FunctionArguments *args, Memory *mem) {
-    NumericValue d;
+    NumericValue d = {};
     d.Float = DBL_MAX;
     d.Int = INT64_MAX;
     d.Kind = NumberKind_Int;
@@ -757,11 +796,19 @@ NumericValue Tan(FunctionArguments *args, Memory *mem) {
     r.Int = (int64_t)r.Float;
     return r;
 }
+NumericValue Print(FunctionArguments *args, Memory *mem) {
+    NumericValue d = {};
+    for (int iter = 0; iter < args->Count; iter++) {
+        d = Evaluate(args->Args[0], mem);
+        printf("%s\n", d.Identifier);
+    }
+    return d;
+}
 
 typedef NumericValue (*EvaluateBuiltinFunc)(FunctionArguments *, Memory *);
 
 static EvaluateBuiltinFunc BuildinFuncEvaluateTable[] = {
-    Sum, Mul, Min, Max, Sin, Cos, Tan
+    Sum, Mul, Min, Max, Sin, Cos, Tan, Print
 };
 
 NumericValue EvaluateBuildinFunction(ExprNode *expr, Memory *mem) {
@@ -803,13 +850,31 @@ NumericValue Evaluate(ExprNode *expr, Memory *mem) {
         NumericValue R = Evaluate(expr->Right, mem);
         if (expr->BinaryOperator == BinaryOperator_Plus) {
             return AddValue(L, R);
-        } else if (expr->BinaryOperator == BinaryOperator_Minus) {
+        }
+        else if (expr->BinaryOperator == BinaryOperator_Minus) {
             return SubValue(L, R);
-        } else if (expr->BinaryOperator == BinaryOperator_Multiply) {
+        } 
+        else if (expr->BinaryOperator == BinaryOperator_Multiply) {
             return MulValue(L, R);
-        } else if (expr->BinaryOperator == BinaryOperator_Divide) {
+        } 
+        else if (expr->BinaryOperator == BinaryOperator_Divide) {
             return DivValue(L, R);
-        } else {
+        }
+        else if (expr->BinaryOperator == BinaryOperator_BitwiseAnd) {
+            NumericValue d = {};
+            d.Int = L.Int & R.Int;
+            d.Float = (int)L.Float & (int)R.Float;
+            d.Kind = L.Kind != R.Kind ? NumberKind_Float : L.Kind;
+            return d;
+        }
+        else if (expr->BinaryOperator == BinaryOperator_BitwiseOr) {
+            NumericValue d = {};
+            d.Int = L.Int | R.Int;
+            d.Float = (int)L.Float | (int)R.Float;
+            d.Kind = L.Kind != R.Kind ? NumberKind_Float : L.Kind;
+            return d;
+        }
+        else {
             printf("TODO\n");
             return NumericValue{};
         }
@@ -825,6 +890,12 @@ NumericValue Evaluate(ExprNode *expr, Memory *mem) {
         return EvaluateBuildinFunction(expr, mem);
     }
 
+    if (expr->Kind == ExprKind_DoubleQuotation) {
+        NumericValue d = {};
+        strcpy_s(d.Identifier, expr->SrcToken.Identifier);
+        d.Kind = NumberKind_Char;
+        return d;
+    }
     printf("TODO\n");
 }
 
@@ -874,11 +945,21 @@ int main(int argc, char **argv) {
         if (memory.Ans.Kind == NumberKind_Float) {
             printf("Float = %f\n", memory.Ans.Float);
         }
-        else {
+        else if(memory.Ans.Kind == NumberKind_Int){
             printf("Int = %ld\n", memory.Ans.Int);
+        }
+        else if (memory.Ans.Kind == NumberKind_Char) {
+            printf("String = %s\n", memory.Ans.Identifier);
         }
         printf("=================================================================================\n");
     }
 
     return 0;
 }
+
+
+/*
+Now I need to develop the support for the string types and now the string types is in the variable so I need to change that 
+
+
+*/
