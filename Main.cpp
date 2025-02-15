@@ -32,7 +32,7 @@ enum TokenKind {
     TokenKind_EqualEqual, // ==
     TokenKind_Or,         // ||
     TokenKind_And,        // &&
-    TokenKind_DoubleQuotation,
+    TokenKind_String,
 };
 
 const char *TokenNames[] = {
@@ -210,20 +210,28 @@ bool Tokenize(Tokenizer *tokenizer, Token *token) {
     if(a == '\"'){
             tokenizer->Position++;
             for (int iter = 0; tokenizer->Position < tokenizer->Length; iter++) {
-                if ((tokenizer->Input[tokenizer->Position] == '\"')) {
+                char b = tokenizer->Input[tokenizer->Position];
+                if (( b == '\"')) {
                     tokenizer->Position ++;
-                    token->Kind = TokenKind_DoubleQuotation;
+                    token->Kind = TokenKind_String;
                     return true;
                 }
-                token->Identifier[iter] = tokenizer->Input[tokenizer->Position];
+                if (iter >= MAX_IDENTIFIER_SIZE) {
+                    printf("Too long String\n");
+                    exit(-1);
+                }
+                if (b == '\\') {
+                    tokenizer->Position++;
+                    b = tokenizer->Input[tokenizer->Position];
+                    while (isspace(b)) {
+                        tokenizer->Position++;
+                        b = tokenizer->Input[tokenizer->Position];
+                    }
+                }
+                token->Identifier[iter] = b;
                 tokenizer->Position++;
             }
     }
-    /*
-    Her hai tokenize le k garxa vanedekhi haina it will separate the tokens from the input and then parse 
-    But during this condition we do not want to separate the tokens and use as it is;
-    */
-
     printf("invalid character: %c\n", a);
     exit(1);
 
@@ -316,7 +324,7 @@ enum ExprKind {
     ExprKind_Number,
     ExprKind_Identifier,
     ExprKind_BuiltinFunc,
-    ExprKind_DoubleQuotation,
+    ExprKind_String,
 };
 
 struct ExprNode;
@@ -534,10 +542,10 @@ ExprNode *ParseSubexpression(Parser *parser, bool start) {
             return expr;
         }
     }
-    if (AcceptToken(parser, TokenKind_DoubleQuotation, &token)) {
+    if (AcceptToken(parser, TokenKind_String, &token)) {
       //parser will contain the current token that has been parsed and the toekn will contain the previous token
         //Here the previous token is TokenKind_DoubleQuotation
-        ExprNode *expr = ExprNodeCreate(ExprKind_DoubleQuotation, token);
+        ExprNode *expr = ExprNodeCreate(ExprKind_String, token);
         return expr;
     }
 
@@ -890,7 +898,7 @@ NumericValue Evaluate(ExprNode *expr, Memory *mem) {
         return EvaluateBuildinFunction(expr, mem);
     }
 
-    if (expr->Kind == ExprKind_DoubleQuotation) {
+    if (expr->Kind == ExprKind_String) {
         NumericValue d = {};
         strcpy_s(d.Identifier, expr->SrcToken.Identifier);
         d.Kind = NumberKind_Char;
