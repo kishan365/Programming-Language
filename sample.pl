@@ -1,4 +1,5 @@
-kishan = "My   \	
-name is kishan shah";
-print(kishan);
-a=2+5;
+kishan = "My \n kishan";
+Describe = 3.2;
+number = 2;
+print(kishan, Describe, number);
+

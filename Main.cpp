@@ -12,6 +12,7 @@
 //////////////////////////////////////////////////////////////////////////
 
 #define MAX_IDENTIFIER_SIZE 128
+#define MAX_STRING_SIZE     256
 
 enum TokenKind {
     TokenKind_Invalid,
@@ -33,29 +34,33 @@ enum TokenKind {
     TokenKind_Or,         // ||
     TokenKind_And,        // &&
     TokenKind_String,
+    TokenKind_OpenCurlyBrace,
+    TokenKind_CloseCurlyBrace,
 };
 
 const char *TokenNames[] = {
     "invalid", "number", "identifier", "=", ";", "+", "-", "*", "/", "(", ")", "|", "&", "~", "==", "||", "&&"
 };
 
-enum ReturnKind {
-    ReturnKind_Int,
-    ReturnKind_Float,
-    ReturnKind_Char,
+enum ValueType {
+    ValueType_Void,
+    ValueType_Int,
+    ValueType_Float,
+    ValueType_String,
 };
 
-struct ReturnValue {
-    ReturnKind Kind;
+struct Value {
+    ValueType Kind;
     int64_t Int;
     double Float;
-    char Identifier[MAX_IDENTIFIER_SIZE];
+    char String[MAX_STRING_SIZE];
 };
 
 struct Token {
     TokenKind Kind;
     int       IdentifierLen;
-    ReturnValue    Data;
+    char Identifier[MAX_IDENTIFIER_SIZE];
+    Value    Data;
 };
 
 struct Tokenizer {
@@ -140,6 +145,27 @@ bool Tokenize(Tokenizer *tokenizer, Token *token) {
                 return true;
             }
         }
+        if (a == '@' && b == '\"') {
+            tokenizer->Position+=2;
+            for (int iter = 0; tokenizer->Position < tokenizer->Length; iter++) {
+                char c1 = tokenizer->Input[tokenizer->Position];
+                char c2 = tokenizer->Position+1 < tokenizer->Length? tokenizer->Input[tokenizer->Position+1]:0;
+
+                if ((c1 == '\"') && c2 == '@') {
+                    tokenizer->Position+=2;
+                    token->Kind = TokenKind_String;
+                    return true;
+                }
+                if (iter >= MAX_STRING_SIZE) {
+                    printf("Too long String\n");
+                    exit(-1);
+                }
+                token->Data.String[iter] = c1;
+                tokenizer->Position++;
+            }
+            printf("End quotation @ not found\n");
+            exit(-1);
+        }
     }
 
     for (int iter = 0; iter < ArrayCount(SingleCharTokenInput); ++iter) {
@@ -170,10 +196,10 @@ bool Tokenize(Tokenizer *tokenizer, Token *token) {
 
         char *endptr1 = 0;
         char *endptr2 = 0;
-        ReturnValue number;
+        Value number;
         number.Float = strtod(str, &endptr1);
         number.Int = strtol(str, &endptr2, 10);
-        number.Kind = endptr1 == endptr2 ? ReturnKind_Int : ReturnKind_Float;
+        number.Kind = endptr1 == endptr2 ? ValueType_Int : ValueType_Float;
 
         if (str + len != endptr1) {
             printf("invalid number\n");
@@ -194,7 +220,7 @@ bool Tokenize(Tokenizer *tokenizer, Token *token) {
             if (!isalnum(a) && a != '_') {
                 break;
             }
-            token->Data.Identifier[token->IdentifierLen] = a;
+            token->Identifier[token->IdentifierLen] = a;
             token->IdentifierLen += 1;
             tokenizer->Position++;
 
@@ -207,46 +233,53 @@ bool Tokenize(Tokenizer *tokenizer, Token *token) {
         return true;
     }
     if(a == '\"'){
-            tokenizer->Position++;
-            for (int iter = 0; tokenizer->Position < tokenizer->Length; iter++) {
-                char b = tokenizer->Input[tokenizer->Position];
-                if (( b == '\"')) {
-                    tokenizer->Position ++;
-                    token->Kind = TokenKind_String;
-                    return true;
-                }
-                if (iter >= MAX_IDENTIFIER_SIZE) {
-                    printf("Too long String\n");
-                    exit(-1);
-                }
-                if (b == '\\') {
-                    tokenizer->Position++;
-                    b = tokenizer->Input[tokenizer->Position];
-                    while (isspace(b)) {
-                        tokenizer->Position++;
-                        b = tokenizer->Input[tokenizer->Position];
-                    }
-                }
-                token->Data.Identifier[iter] = b;
-                tokenizer->Position++;
+        tokenizer->Position++;
+        for (int iter = 0; tokenizer->Position < tokenizer->Length; iter++) {
+            char b = tokenizer->Input[tokenizer->Position];
+            if (( b == '\"')) {
+                tokenizer->Position ++;
+                token->Kind = TokenKind_String;
+                return true;
             }
+            if (iter >= MAX_STRING_SIZE) {
+                printf("Too long String\n");
+                exit(-1);
+            }
+            if (b == '\n' || b == '\r') {
+                printf("Expected end quotation\n");
+                exit(-1);
+            }
+            if (b == '\\') {
+                tokenizer->Position++;
+               char c =tokenizer->Position < tokenizer->Length? tokenizer->Input[tokenizer->Position]:0;
+               if (c == 'n') {
+                   b = '\n';
+               }
+               else if (c == 'r') {
+                   b = '\r';
+               }
+               else if (c == 't') {
+                   b = '\t';
+               }
+               else if (c == '\\') {
+                   b = '\\';
+               }
+               else {
+                   printf("Invalid Escape Sequence in String\n");
+                   exit(-1);
+               }
+            }
+            
+            token->Data.String[iter] = b;
+            tokenizer->Position++;
+        }
+        printf("End quotation not found\n");
+        exit(-1);
     }
     printf("invalid character: %c\n", a);
     exit(1);
 
     return false;
-}
-
-void PrintToken(const Token *token) {
-    printf("    %s ", TokenNames[token->Kind]);
-
-    if (token->Kind == TokenKind_Number) {
-        printf("(%f)", token->Data);
-    } else if (token->Kind == TokenKind_Identifier) {
-        printf("(%s)", token->Data.Identifier);
-    }
-
-    printf("\n");
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -324,6 +357,7 @@ enum ExprKind {
     ExprKind_Identifier,
     ExprKind_BuiltinFunc,
     ExprKind_String,
+    ExprKind_UserDefinedFunc,
 };
 
 struct ExprNode;
@@ -471,16 +505,13 @@ ExprNode *ParseSubexpression(Parser *parser, bool start) {
         ExprNode *expr = ExprNodeCreate(ExprKind_Number, token);
         return expr;
     }
-    //yeti bela yo herna janxa ki position ma kun token xa vanera ani aile ta " xa ani k garxa tyaha janxa nai identifier ma 
-    //rakhdinxa sab value.
-
     if (AcceptToken(parser, TokenKind_Identifier, &token)) {
         if (ExpectToken(parser, TokenKind_OpenBrace)) {
             BuiltinFuncDesc *desc = NULL;
             BuiltinFunc func = BuiltinFunc_Sum;
 
             for (int iter = 0; iter < BuiltinFunc_Count; ++iter) {
-                if (!strcmp(BuiltinFuncDescs[iter].Name, token.Data.Identifier)) {
+                if (!strcmp(BuiltinFuncDescs[iter].Name, token.Identifier)) {
                     desc = &BuiltinFuncDescs[iter];
                     func = (BuiltinFunc)iter;
                     break;
@@ -488,8 +519,28 @@ ExprNode *ParseSubexpression(Parser *parser, bool start) {
             }
 
             if (!desc) {
-                printf("%s function is undefined\n", token.Data.Identifier);
-                exit(-1);
+                printf("Creating User Defined Function...\n");
+                ExprNode *expr = ExprNodeCreate(ExprKind_UserDefinedFunc, token);
+                ExprNode *left = expr;
+                expr->FuncArgs = ParseFunctionArguments(parser);
+                if (!ExpectToken(parser, TokenKind_CloseBrace)) {
+                    printf("expected close brace\n");
+                    exit(-1);
+                }
+                if (!ExpectToken(parser, TokenKind_OpenCurlyBrace)) {
+                    printf("Expected Open Curly Brace after function declaration\n");
+                    exit(-1);
+                }
+                while (!ExpectToken(parser, TokenKind_CloseCurlyBrace)) {
+                    if (parser->Lex.Position >= parser->Lex.Length) {
+                        printf("Expected Closed Curly Braces to end the Function\n");
+                        exit(-1);
+                    }
+                    left = ParseExpression(parser, true, -1);
+                    left = left->Left;
+                }
+                expr->Left = left;
+                return expr;
             }
 
             ExprNode *expr = ExprNodeCreate(ExprKind_BuiltinFunc, token);
@@ -618,8 +669,8 @@ void PrintExpr(ExprNode *expr, int indent) {
     }
    
     if (expr->Kind == ExprKind_Number) {
-        ReturnValue num = expr->SrcToken.Data;
-        if (num.Kind == ReturnKind_Float) {
+        Value num = expr->SrcToken.Data;
+        if (num.Kind == ValueType_Float) {
             printf("Float = %f\n", num.Float);
         }
         else {
@@ -629,7 +680,7 @@ void PrintExpr(ExprNode *expr, int indent) {
     }
 
     if (expr->Kind == ExprKind_Identifier) {
-        printf("Identifier: %s\n", expr->SrcToken.Data.Identifier);
+        printf("Identifier: %s\n", expr->SrcToken.Identifier);
         return;
     }
 
@@ -654,12 +705,15 @@ void PrintExpr(ExprNode *expr, int indent) {
     }
 
     if (expr->Kind == ExprKind_BuiltinFunc) {
-        printf("Function: %s\n", expr->SrcToken.Data.Identifier);
+        printf("Function: %s\n", expr->SrcToken.Identifier);
         for (int iter = 0; iter < expr->FuncArgs.Count; ++iter)
             PrintExpr(expr->FuncArgs.Args[iter], indent + 1);
         return;
     }
-
+    if (expr->Kind == ExprKind_String) {
+        printf("String: \"%s\"\n", expr->SrcToken.Data.String);
+        return;
+    }
     printf("TODO\n");
 }
 
@@ -669,11 +723,11 @@ void PrintExpr(ExprNode *expr, int indent) {
 
 struct Variable {
     char Name[MAX_IDENTIFIER_SIZE];
-    ReturnValue Value;
+    Value Value;
 };
 
 struct Memory {
-    ReturnValue Ans;
+    Value Ans;
     Variable Vars[MAX_VARIABLE_COUNT];
     int VariableCount;
 };
@@ -700,139 +754,148 @@ Variable *GetVariable(Memory *mem, char *varName) {
     return var;
 }
 
-ReturnValue AddValue(ReturnValue A, ReturnValue B) {
-    ReturnValue R = {};
+Value AddValue(Value A, Value B) {
+    Value R = {};
     R.Int = A.Int + B.Int;
     R.Float = A.Float + B.Float;
-    R.Kind = A.Kind != B.Kind ? ReturnKind_Float : A.Kind;
+    R.Kind = A.Kind != B.Kind ? ValueType_Float : A.Kind;
     return R;
 }
 
-ReturnValue SubValue(ReturnValue A, ReturnValue B) {
-    ReturnValue R = {};
+Value SubValue(Value A, Value B) {
+    Value R = {};
     R.Int = A.Int - B.Int;
     R.Float = A.Float - B.Float;
-    R.Kind = A.Kind != B.Kind ? ReturnKind_Float : A.Kind;
+    R.Kind = A.Kind != B.Kind ? ValueType_Float : A.Kind;
     return R;
 }
 
-ReturnValue MulValue(ReturnValue A, ReturnValue B) {
-    ReturnValue R = {};
+Value MulValue(Value A, Value B) {
+    Value R = {};
     R.Int = A.Int * B.Int;
     R.Float = A.Float * B.Float;
-    R.Kind = A.Kind != B.Kind ? ReturnKind_Float : A.Kind;
+    R.Kind = A.Kind != B.Kind ? ValueType_Float : A.Kind;
     return R;
 }
 
-ReturnValue DivValue(ReturnValue A, ReturnValue B) {
-    ReturnValue R = {};
+Value DivValue(Value A, Value B) {
+    Value R = {};
     R.Int = A.Int / B.Int;
     R.Float = A.Float / B.Float;
-    R.Kind = A.Kind != B.Kind ? ReturnKind_Float : A.Kind;
+    R.Kind = A.Kind != B.Kind ? ValueType_Float : A.Kind;
     return R;
 }
 
-ReturnValue Evaluate(ExprNode *expr, Memory *mem);
+Value Evaluate(ExprNode *expr, Memory *mem);
 
-ReturnValue Sum(FunctionArguments *args, Memory *mem) {
-    ReturnValue d = {};
+Value Sum(FunctionArguments *args, Memory *mem) {
+    Value d = {};
     for (int iter = 0; iter < args->Count; iter++) {
         d = AddValue(d,Evaluate(args->Args[iter],mem));
     }
     return d;
 }
 
-ReturnValue Mul(FunctionArguments *args, Memory *mem) {
-    ReturnValue d = {};
+Value Mul(FunctionArguments *args, Memory *mem) {
+    Value d = {};
     d.Int = 1;
     d.Float = 1;
-    d.Kind = ReturnKind_Int;
+    d.Kind = ValueType_Int;
     for (int iter = 0; iter < args->Count; iter++) {
         d = MulValue(d, Evaluate(args->Args[iter], mem));
     }
     return d;
 }
 
-ReturnValue Min(FunctionArguments *args, Memory *mem) {
-    ReturnValue d = {};
+Value Min(FunctionArguments *args, Memory *mem) {
+    Value d = {};
     d.Float= DBL_MAX;
     d.Int = INT64_MAX;
-    d.Kind = ReturnKind_Int;
+    d.Kind = ValueType_Int;
     for (int iter = 0; iter < args->Count; iter++) {
-        ReturnValue n = Evaluate(args->Args[iter], mem);
+        Value n = Evaluate(args->Args[iter], mem);
         if (n.Float < d.Float) d = n;
     }
     return d;
 }
 
-ReturnValue Max(FunctionArguments *args, Memory *mem) {
-    ReturnValue d = {};
+Value Max(FunctionArguments *args, Memory *mem) {
+    Value d = {};
     d.Float = DBL_MAX;
     d.Int = INT64_MAX;
-    d.Kind = ReturnKind_Int;
+    d.Kind = ValueType_Int;
     for (int iter = 0; iter < args->Count; iter++) {
-        ReturnValue n = Evaluate(args->Args[iter], mem);
+        Value n = Evaluate(args->Args[iter], mem);
         if (n.Float > d.Float) d = n;
     }
     return d;
 }
 
-ReturnValue Sin(FunctionArguments *args, Memory *mem) {
-    ReturnValue d = Evaluate(args->Args[0], mem);
-    ReturnValue r;
+Value Sin(FunctionArguments *args, Memory *mem) {
+    Value d = Evaluate(args->Args[0], mem);
+    Value r;
     r.Float = sin(d.Float);
-    r.Kind = ReturnKind_Float;
+    r.Kind = ValueType_Float;
     r.Int = (int64_t)r.Float;
     return r;
 }
 
-ReturnValue Cos(FunctionArguments *args, Memory *mem) {
-    ReturnValue d = Evaluate(args->Args[0], mem);
-    ReturnValue r;
+Value Cos(FunctionArguments *args, Memory *mem) {
+    Value d = Evaluate(args->Args[0], mem);
+    Value r;
     r.Float = cos(d.Float);
-    r.Kind = ReturnKind_Float;
+    r.Kind = ValueType_Float;
     r.Int = (int64_t)r.Float;
     return r;
 }
 
-ReturnValue Tan(FunctionArguments *args, Memory *mem) {
-    ReturnValue d = Evaluate(args->Args[0], mem);
-    ReturnValue r;
+Value Tan(FunctionArguments *args, Memory *mem) {
+    Value d = Evaluate(args->Args[0], mem);
+    Value r;
     r.Float = tan(d.Float);
-    r.Kind = ReturnKind_Float;
+    r.Kind = ValueType_Float;
     r.Int = (int64_t)r.Float;
     return r;
 }
-ReturnValue Print(FunctionArguments *args, Memory *mem) {
-    ReturnValue d = {};
+Value Print(FunctionArguments *args, Memory *mem) {
     for (int iter = 0; iter < args->Count; iter++) {
-        d = Evaluate(args->Args[0], mem);
-        printf("%s\n", d.Identifier);
+       Value d = Evaluate(args->Args[iter], mem);
+        if (d.Kind == ValueType_Float) {
+            printf("%f ", d.Float);
+        }
+        else if (d.Kind == ValueType_Int) {
+            printf("%ld ", d.Int);
+        }
+        else if (d.Kind == ValueType_String) {
+            printf("%s ", d.String);
+
+        }
     }
-    return d;
+    printf("\n");
+    return Value{};
 }
 
-typedef ReturnValue (*EvaluateBuiltinFunc)(FunctionArguments *, Memory *);
+typedef Value (*EvaluateBuiltinFunc)(FunctionArguments *, Memory *);
 
 static EvaluateBuiltinFunc BuildinFuncEvaluateTable[] = {
     Sum, Mul, Min, Max, Sin, Cos, Tan, Print
 };
 
-ReturnValue EvaluateBuildinFunction(ExprNode *expr, Memory *mem) {
+Value EvaluateBuildinFunction(ExprNode *expr, Memory *mem) {
     if (expr->Func < ArrayCount(BuildinFuncEvaluateTable))
         return BuildinFuncEvaluateTable[expr->Func](&expr->FuncArgs, mem);
     printf("TODO\n");
 }
 
-ReturnValue Evaluate(ExprNode *expr, Memory *mem) {
+Value Evaluate(ExprNode *expr, Memory *mem) {
     if (expr->Kind == ExprKind_Number) {
         return expr->SrcToken.Data;
     }
 
     if (expr->Kind == ExprKind_Identifier) {
-        Variable *var = SearchVar(mem, expr->SrcToken.Data.Identifier);
+        Variable *var = SearchVar(mem, expr->SrcToken.Identifier);
         if (!var) {
-            printf("Variable %s is not defined\n", expr->SrcToken.Data.Identifier);
+            printf("Variable %s is not defined\n", expr->SrcToken.Identifier);
             exit(-1);
         }
         return var->Value;
@@ -842,19 +905,19 @@ ReturnValue Evaluate(ExprNode *expr, Memory *mem) {
         if (expr->UnaryOperator == UnaryOperator_Plus) {
             return Evaluate(expr->Left, mem);
         } else if (expr->UnaryOperator == UnaryOperator_Minus) {
-            ReturnValue v = Evaluate(expr->Left, mem);
+            Value v = Evaluate(expr->Left, mem);
             v.Int = -v.Int;
             v.Float = -v.Float;
             return v;
         } else {
             printf("TODO\n");
-            return ReturnValue{};
+            return Value{};
         }
     }
 
     if (expr->Kind == ExprKind_BinaryOperator) {
-        ReturnValue L = Evaluate(expr->Left, mem);
-        ReturnValue R = Evaluate(expr->Right, mem);
+        Value L = Evaluate(expr->Left, mem);
+        Value R = Evaluate(expr->Right, mem);
         if (expr->BinaryOperator == BinaryOperator_Plus) {
             return AddValue(L, R);
         }
@@ -868,27 +931,27 @@ ReturnValue Evaluate(ExprNode *expr, Memory *mem) {
             return DivValue(L, R);
         }
         else if (expr->BinaryOperator == BinaryOperator_BitwiseAnd) {
-            ReturnValue d = {};
+            Value d = {};
             d.Int = L.Int & R.Int;
             d.Float = (int)L.Float & (int)R.Float;
-            d.Kind = L.Kind != R.Kind ? ReturnKind_Float : L.Kind;
+            d.Kind = L.Kind != R.Kind ? ValueType_Float : L.Kind;
             return d;
         }
         else if (expr->BinaryOperator == BinaryOperator_BitwiseOr) {
-            ReturnValue d = {};
+            Value d = {};
             d.Int = L.Int | R.Int;
             d.Float = (int)L.Float | (int)R.Float;
-            d.Kind = L.Kind != R.Kind ? ReturnKind_Float : L.Kind;
+            d.Kind = L.Kind != R.Kind ? ValueType_Float : L.Kind;
             return d;
         }
         else {
             printf("TODO\n");
-            return ReturnValue{};
+            return Value{};
         }
     }
 
     if (expr->Kind == ExprKind_Assignment) {
-        Variable *var = GetVariable(mem, expr->Left->SrcToken.Data.Identifier);
+        Variable *var = GetVariable(mem, expr->Left->SrcToken.Identifier);
         var->Value = Evaluate(expr->Right, mem);
         return var->Value;
     }
@@ -898,10 +961,13 @@ ReturnValue Evaluate(ExprNode *expr, Memory *mem) {
     }
 
     if (expr->Kind == ExprKind_String) {
-        ReturnValue d = {};
-        strcpy_s(d.Identifier, expr->SrcToken.Data.Identifier);
-        d.Kind = ReturnKind_Char;
+        Value d = {};
+        strcpy_s(d.String, expr->SrcToken.Data.String);
+        d.Kind = ValueType_String;
         return d;
+    }
+    if (expr->Kind == ExprKind_UserDefinedFunc) {
+        return Evaluate(expr->Left, mem);
     }
     printf("TODO\n");
 }
@@ -949,18 +1015,17 @@ int main(int argc, char **argv) {
         PrintExpr(expr, 0);
         EvaluateRootExpr(expr, &memory);
         ExprNodeReset();
-        if (memory.Ans.Kind == ReturnKind_Float) {
+        if (memory.Ans.Kind == ValueType_Float) {
             printf("Float = %f\n", memory.Ans.Float);
         }
-        else if(memory.Ans.Kind == ReturnKind_Int){
+        else if(memory.Ans.Kind == ValueType_Int){
             printf("Int = %ld\n", memory.Ans.Int);
         }
-        else if (memory.Ans.Kind == ReturnKind_Char) {
-            printf("String = %s\n", memory.Ans.Identifier);
+        else if (memory.Ans.Kind == ValueType_String) {
+            printf("String = \"%s\"\n", memory.Ans.String);
         }
         printf("=================================================================================\n");
     }
-
     return 0;
 }
 
