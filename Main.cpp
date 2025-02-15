@@ -355,7 +355,7 @@ enum ExprKind {
     ExprKind_Assignment,
     ExprKind_Number,
     ExprKind_Identifier,
-    ExprKind_BuiltinFunc,
+    ExprKind_Func,
     ExprKind_String,
     ExprKind_UserDefinedFunc,
 };
@@ -363,6 +363,7 @@ enum ExprKind {
 struct ExprNode;
 
 enum BuiltinFunc {
+    BuiltinFunc_Invalid,
     BuiltinFunc_Sum,
     BuiltinFunc_Mul,
     BuiltinFunc_Min,
@@ -380,6 +381,7 @@ struct BuiltinFuncDesc {
 };
 
 static BuiltinFuncDesc BuiltinFuncDescs[] = { 
+    { "", 0 },
     { "sum", -1 },
     { "mul", -1 },
     { "min", -1 },
@@ -508,7 +510,7 @@ ExprNode *ParseSubexpression(Parser *parser, bool start) {
     if (AcceptToken(parser, TokenKind_Identifier, &token)) {
         if (ExpectToken(parser, TokenKind_OpenBrace)) {
             BuiltinFuncDesc *desc = NULL;
-            BuiltinFunc func = BuiltinFunc_Sum;
+            BuiltinFunc func = BuiltinFunc_Invalid;
 
             for (int iter = 0; iter < BuiltinFunc_Count; ++iter) {
                 if (!strcmp(BuiltinFuncDescs[iter].Name, token.Identifier)) {
@@ -518,47 +520,27 @@ ExprNode *ParseSubexpression(Parser *parser, bool start) {
                 }
             }
 
-            if (!desc) {
-                printf("Creating User Defined Function...\n");
-                ExprNode *expr = ExprNodeCreate(ExprKind_UserDefinedFunc, token);
-                ExprNode *left = expr;
-                expr->FuncArgs = ParseFunctionArguments(parser);
-                if (!ExpectToken(parser, TokenKind_CloseBrace)) {
-                    printf("expected close brace\n");
-                    exit(-1);
-                }
-                if (!ExpectToken(parser, TokenKind_OpenCurlyBrace)) {
-                    printf("Expected Open Curly Brace after function declaration\n");
-                    exit(-1);
-                }
-                while (!ExpectToken(parser, TokenKind_CloseCurlyBrace)) {
-                    if (parser->Lex.Position >= parser->Lex.Length) {
-                        printf("Expected Closed Curly Braces to end the Function\n");
-                        exit(-1);
-                    }
-                    left = ParseExpression(parser, true, -1);
-                    left = left->Left;
-                }
-                expr->Left = left;
-                return expr;
-            }
-
-            ExprNode *expr = ExprNodeCreate(ExprKind_BuiltinFunc, token);
+            ExprNode *expr = ExprNodeCreate(ExprKind_Func, token);
             expr->FuncArgs = ParseFunctionArguments(parser);
             expr->Func = func;
-
-            if (desc->ArgCount != -1 && desc->ArgCount != expr->FuncArgs.Count) {
-                printf("expected %d number of arguments but got %d arguments for function %s\n",
-                    desc->ArgCount, expr->FuncArgs.Count, desc->Name);
-                exit(-1);
-            }
+           
+			if (desc) {
+				if (desc->ArgCount != -1 && desc->ArgCount != expr->FuncArgs.Count) {
+					printf("expected %d number of arguments but got %d arguments for function %s\n",
+						desc->ArgCount, expr->FuncArgs.Count, desc->Name);
+					exit(-1);
+				}
+			}
 
             if (!ExpectToken(parser, TokenKind_CloseBrace)) {
                 printf("expected close brace\n");
                 exit(-1);
             }
+
             return expr;
-        } else {
+        } 
+        
+        else {
             ExprNode *expr = ExprNodeCreate(ExprKind_Identifier, token);
             return expr;
         }
@@ -704,7 +686,7 @@ void PrintExpr(ExprNode *expr, int indent) {
         return;
     }
 
-    if (expr->Kind == ExprKind_BuiltinFunc) {
+    if (expr->Kind == ExprKind_Func) {
         printf("Function: %s\n", expr->SrcToken.Identifier);
         for (int iter = 0; iter < expr->FuncArgs.Count; ++iter)
             PrintExpr(expr->FuncArgs.Args[iter], indent + 1);
@@ -714,6 +696,7 @@ void PrintExpr(ExprNode *expr, int indent) {
         printf("String: \"%s\"\n", expr->SrcToken.Data.String);
         return;
     }
+
     printf("TODO\n");
 }
 
@@ -787,6 +770,11 @@ Value DivValue(Value A, Value B) {
 }
 
 Value Evaluate(ExprNode *expr, Memory *mem);
+
+Value UserDefined(FunctionArguments *args, Memory *mem) {
+    printf("TODO\n");
+    return Value{};
+}
 
 Value Sum(FunctionArguments *args, Memory *mem) {
     Value d = {};
@@ -878,15 +866,18 @@ Value Print(FunctionArguments *args, Memory *mem) {
 typedef Value (*EvaluateBuiltinFunc)(FunctionArguments *, Memory *);
 
 static EvaluateBuiltinFunc BuildinFuncEvaluateTable[] = {
-    Sum, Mul, Min, Max, Sin, Cos, Tan, Print
+    UserDefined, Sum, Mul, Min, Max, Sin, Cos, Tan, Print
 };
 
-Value EvaluateBuildinFunction(ExprNode *expr, Memory *mem) {
+Value EvaluateFunction(ExprNode *expr, Memory *mem) {
     if (expr->Func < ArrayCount(BuildinFuncEvaluateTable))
         return BuildinFuncEvaluateTable[expr->Func](&expr->FuncArgs, mem);
     printf("TODO\n");
 }
-
+Value EvaluateUserDefinedFunction(ExprNode *expr, Memory *mem) {
+    printf("TODO\n");
+    return Value{};
+}
 Value Evaluate(ExprNode *expr, Memory *mem) {
     if (expr->Kind == ExprKind_Number) {
         return expr->SrcToken.Data;
@@ -956,8 +947,8 @@ Value Evaluate(ExprNode *expr, Memory *mem) {
         return var->Value;
     }
 
-    if (expr->Kind == ExprKind_BuiltinFunc) {
-        return EvaluateBuildinFunction(expr, mem);
+    if (expr->Kind == ExprKind_Func) {
+        return EvaluateFunction(expr, mem);
     }
 
     if (expr->Kind == ExprKind_String) {
@@ -966,9 +957,7 @@ Value Evaluate(ExprNode *expr, Memory *mem) {
         d.Kind = ValueType_String;
         return d;
     }
-    if (expr->Kind == ExprKind_UserDefinedFunc) {
-        return Evaluate(expr->Left, mem);
-    }
+   
     printf("TODO\n");
 }
 
