@@ -11,8 +11,8 @@
 //////////////////////// Tokenizer  //////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 
-#define MAX_IDENTIFIER_SIZE 128
-#define MAX_STRING_SIZE     256
+#define MAX_IDENTIFIER_SIZE 32
+#define MAX_STRING_SIZE     32
 
 enum TokenKind {
     TokenKind_Invalid,
@@ -36,31 +36,38 @@ enum TokenKind {
     TokenKind_String,
     TokenKind_OpenCurlyBrace,
     TokenKind_CloseCurlyBrace,
+    TokenKind_Func,
+    TokenKind_Return,
 };
 
 const char *TokenNames[] = {
-    "invalid", "number", "identifier", "=", ";", "+", "-", "*", "/", "(", ")", "|", "&", "~", "==", "||", "&&"
+    "invalid", "number", "identifier", "=", ";", "+", "-", "*", "/", "(", ")", "|", "&", "~", "==", "||", "&&", "func", "return"
 };
+
+struct ExprNode;
 
 enum ValueType {
     ValueType_Void,
     ValueType_Int,
     ValueType_Float,
     ValueType_String,
+    ValueType_Function,
 };
 
 struct Value {
-    ValueType Kind;
+    ValueType Type;
     int64_t Int;
     double Float;
     char String[MAX_STRING_SIZE];
+    ExprNode *Function;
+    bool ExitScope; // cleanup
 };
 
 struct Token {
     TokenKind Kind;
     int       IdentifierLen;
-    char Identifier[MAX_IDENTIFIER_SIZE];
-    Value    Data;
+    char      Identifier[MAX_IDENTIFIER_SIZE];
+    Value     Data;
 };
 
 struct Tokenizer {
@@ -81,7 +88,7 @@ bool SkipWhitespaces(Tokenizer *tokenizer) {
     return true;
 }
 
-const char      SingleCharTokenInput[] = { '=', ';', ',', '+', '-', '*', '/', '(', ')', '|', '&', '~' };
+const char      SingleCharTokenInput[] = { '=', ';', ',', '+', '-', '*', '/', '(', ')', '|', '&', '~', '{', '}' };
 const TokenKind SingleCharTokenOutput[] = {
     TokenKind_Equal,
     TokenKind_Semicolon,
@@ -95,6 +102,8 @@ const TokenKind SingleCharTokenOutput[] = {
     TokenKind_BitwiseOr,
     TokenKind_BitwiseAnd,
     TokenKind_BitwiseNot,
+    TokenKind_OpenCurlyBrace,
+    TokenKind_CloseCurlyBrace,
 };
 
 struct DoubleCharToken {
@@ -199,7 +208,7 @@ bool Tokenize(Tokenizer *tokenizer, Token *token) {
         Value number;
         number.Float = strtod(str, &endptr1);
         number.Int = strtol(str, &endptr2, 10);
-        number.Kind = endptr1 == endptr2 ? ValueType_Int : ValueType_Float;
+        number.Type = endptr1 == endptr2 ? ValueType_Int : ValueType_Float;
 
         if (str + len != endptr1) {
             printf("invalid number\n");
@@ -230,9 +239,15 @@ bool Tokenize(Tokenizer *tokenizer, Token *token) {
             }
         }
 
+        if (strcmp(token->Identifier, "func") == 0)
+            token->Kind = TokenKind_Func;
+        else if (strcmp(token->Identifier, "return") == 0)
+            token->Kind = TokenKind_Return;
+
         return true;
     }
-    if(a == '\"'){
+
+    if(a == '\"') {
         tokenizer->Position++;
         for (int iter = 0; tokenizer->Position < tokenizer->Length; iter++) {
             char b = tokenizer->Input[tokenizer->Position];
@@ -286,8 +301,9 @@ bool Tokenize(Tokenizer *tokenizer, Token *token) {
 /////////////////////////  Parser  ///////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 
-#define MAX_VARIABLE_COUNT 1024
-#define MAX_ARGUMENT_COUNT 64
+#define MAX_VARIABLE_COUNT 32
+#define MAX_ARGUMENT_COUNT 32
+#define MAX_STATEMENT_COUNT 32
 
 enum BinaryOperatorKind {
     BinaryOperator_Plus,
@@ -356,8 +372,10 @@ enum ExprKind {
     ExprKind_Number,
     ExprKind_Identifier,
     ExprKind_Func,
+    ExprKind_FuncCall,
     ExprKind_String,
-    ExprKind_UserDefinedFunc,
+    ExprKind_Return,
+    ExprKind_Scope
 };
 
 struct ExprNode;
@@ -397,12 +415,24 @@ struct FunctionArguments {
     int Count;
 };
 
+struct FunctionParameters {
+    Token Params[MAX_ARGUMENT_COUNT];
+    int Count;
+};
+
+struct ScopeBody {
+    ExprNode *Statements[MAX_STATEMENT_COUNT];
+    int StatementCount;
+};
+
 struct ExprNode {
     ExprKind Kind;
     Token SrcToken;
     ExprNode *Left;
     ExprNode *Right;
+    ScopeBody Scope;
     BuiltinFunc Func;
+    FunctionParameters Params;
     FunctionArguments FuncArgs;
     BinaryOperatorKind BinaryOperator;
     UnaryOperatorKind UnaryOperator;
@@ -477,28 +507,53 @@ bool ExpectToken(Parser *parser, TokenKind kind) {
 
 ExprNode *ParseExpression(Parser *parser, bool start, int prec);
 
-FunctionArguments ParseFunctionArguments(Parser *parser) {
-    FunctionArguments args;
-    memset(&args, 0, sizeof(args));
+void ParseFunctionArguments(Parser *parser, FunctionArguments *args) {
+    memset(args, 0, sizeof(*args));
 
     if (PeekToken(parser, TokenKind_CloseBrace))
-        return args;
+        return;
 
     while (Parsing(parser)) {
-        if (args.Count == MAX_ARGUMENT_COUNT) {
+        if (args->Count == MAX_ARGUMENT_COUNT) {
             printf("too many parameters in function\n");
             exit(-1);
         }
 
-        args.Args[args.Count] = ParseExpression(parser, true, -1);
-        args.Count += 1;
+        args->Args[args->Count] = ParseExpression(parser, true, -1);
+        args->Count += 1;
 
         if (!ExpectToken(parser, TokenKind_Comma))
             break;
     }
-
-    return args;
 }
+
+void ParseFunctionParameters(Parser *parser, FunctionParameters *params) {
+    memset(params, 0, sizeof(*params));
+
+    if (PeekToken(parser, TokenKind_CloseBrace))
+        return;
+
+    while (Parsing(parser)) {
+        if (params->Count == MAX_ARGUMENT_COUNT) {
+            printf("too many parameters in function\n");
+            exit(-1);
+        }
+
+        Token param = {};
+        if (!AcceptToken(parser, TokenKind_Identifier, &param)) {
+            printf("expected argument\n");
+            exit(-1);
+        }
+
+        params->Params[params->Count] = param;
+        params->Count += 1;
+
+        if (!ExpectToken(parser, TokenKind_Comma))
+            break;
+    }
+}
+
+ExprNode *ParseScope(Parser *parser);
 
 ExprNode *ParseSubexpression(Parser *parser, bool start) {
     Token token = {};
@@ -507,6 +562,7 @@ ExprNode *ParseSubexpression(Parser *parser, bool start) {
         ExprNode *expr = ExprNodeCreate(ExprKind_Number, token);
         return expr;
     }
+
     if (AcceptToken(parser, TokenKind_Identifier, &token)) {
         if (ExpectToken(parser, TokenKind_OpenBrace)) {
             BuiltinFuncDesc *desc = NULL;
@@ -520,8 +576,8 @@ ExprNode *ParseSubexpression(Parser *parser, bool start) {
                 }
             }
 
-            ExprNode *expr = ExprNodeCreate(ExprKind_Func, token);
-            expr->FuncArgs = ParseFunctionArguments(parser);
+            ExprNode *expr = ExprNodeCreate(ExprKind_FuncCall, token);
+            ParseFunctionArguments(parser, &expr->FuncArgs);
             expr->Func = func;
            
 			if (desc) {
@@ -544,6 +600,25 @@ ExprNode *ParseSubexpression(Parser *parser, bool start) {
             ExprNode *expr = ExprNodeCreate(ExprKind_Identifier, token);
             return expr;
         }
+    }
+
+    if (AcceptToken(parser, TokenKind_Func, &token)) {
+        if (!ExpectToken(parser, TokenKind_OpenBrace)) {
+            printf("expected open brace\n");
+            exit(-1);
+        }
+
+        ExprNode *expr = ExprNodeCreate(ExprKind_Func, token);
+        ParseFunctionParameters(parser, &expr->Params);
+
+        if (!ExpectToken(parser, TokenKind_CloseBrace)) {
+            printf("expected open brace\n");
+            exit(-1);
+        }
+
+        expr->Left = ParseScope(parser);
+
+        return expr;
     }
 
     if (ExpectToken(parser, TokenKind_OpenBrace)) {
@@ -586,6 +661,15 @@ ExprNode *ParseSubexpression(Parser *parser, bool start) {
 }
 
 ExprNode *ParseExpression(Parser *parser, bool start, int prev_prec) {
+    if (start) {
+        Token token = {};
+        if (AcceptToken(parser, TokenKind_Return, &token)) {
+            ExprNode *expr = ExprNodeCreate(ExprKind_Return, token);
+            expr->Left = ParseExpression(parser, false, -1);
+            return expr;
+        }
+    }
+
     ExprNode *left = ParseSubexpression(parser, true);
 
     while (Parsing(parser)) {
@@ -632,14 +716,42 @@ ExprNode *ParseExpression(Parser *parser, bool start, int prev_prec) {
     return left;
 }
 
-ExprNode *ParseRootExpression(Parser *parser) {
+ExprNode *ParseStatement(Parser *parser, bool root) {
     ExprNode *expr = ParseExpression(parser, true, -1);
-    if (!ExpectToken(parser, TokenKind_Semicolon)) {
-        printf("error: expected semicolon\n");
-        exit(1);
+    if (root) {
+        if (!ExpectToken(parser, TokenKind_Semicolon)) {
+            printf("error: expected semicolon\n");
+            exit(1);
+        }
     }
     return expr;
 }
+
+ExprNode *ParseScope(Parser *parser) {
+    Token token = {};
+    if (AcceptToken(parser, TokenKind_OpenCurlyBrace, &token)) {
+        ExprNode *expr = ExprNodeCreate(ExprKind_Scope, token);
+
+        while (Parsing(parser)) {
+            if (PeekToken(parser, TokenKind_CloseCurlyBrace))
+                break;
+            if (expr->Scope.StatementCount == MAX_STATEMENT_COUNT) {
+                printf("too many statements in a function\n");
+            }
+            expr->Scope.Statements[expr->Scope.StatementCount++] = ParseStatement(parser, true);
+        }
+
+        if (!ExpectToken(parser, TokenKind_CloseCurlyBrace)) {
+            printf("expected close curly brace\n");
+            exit(-1);
+        }
+
+        return expr;
+    } else {
+        return ParseStatement(parser, false);
+    }
+}
+
 
 //////////////////////////////////////////////////////////////////////////
 /////////////////////////  Print  ////////////////////////////////////////
@@ -652,7 +764,7 @@ void PrintExpr(ExprNode *expr, int indent) {
    
     if (expr->Kind == ExprKind_Number) {
         Value num = expr->SrcToken.Data;
-        if (num.Kind == ValueType_Float) {
+        if (num.Type == ValueType_Float) {
             printf("Float = %f\n", num.Float);
         }
         else {
@@ -686,7 +798,7 @@ void PrintExpr(ExprNode *expr, int indent) {
         return;
     }
 
-    if (expr->Kind == ExprKind_Func) {
+    if (expr->Kind == ExprKind_FuncCall) {
         printf("Function: %s\n", expr->SrcToken.Identifier);
         for (int iter = 0; iter < expr->FuncArgs.Count; ++iter)
             PrintExpr(expr->FuncArgs.Args[iter], indent + 1);
@@ -694,6 +806,31 @@ void PrintExpr(ExprNode *expr, int indent) {
     }
     if (expr->Kind == ExprKind_String) {
         printf("String: \"%s\"\n", expr->SrcToken.Data.String);
+        return;
+    }
+
+    if (expr->Kind == ExprKind_Return) {
+        printf("Return:\n");
+        PrintExpr(expr->Left, indent + 1);
+        return;
+    }
+
+    if (expr->Kind == ExprKind_Func) {
+        printf("Func: (");
+        for (int iter = 0; iter < expr->Params.Count; ++iter) {
+            if (iter) printf(", ");
+            printf("%s", expr->Params.Params[iter].Identifier);
+        }
+        printf(")\n");
+        PrintExpr(expr->Left, indent + 1);
+        return;
+    }
+
+    if (expr->Kind == ExprKind_Scope) {
+        printf("Scope:\n");
+        for (int iter = 0; iter < expr->Scope.StatementCount; ++iter) {
+            PrintExpr(expr->Scope.Statements[iter], indent + 1);
+        }
         return;
     }
 
@@ -713,6 +850,8 @@ struct Memory {
     Value Ans;
     Variable Vars[MAX_VARIABLE_COUNT];
     int VariableCount;
+
+    Memory *Parent;
 };
 
 Variable *SearchVar(Memory *mem, char *varName) {
@@ -721,6 +860,8 @@ Variable *SearchVar(Memory *mem, char *varName) {
             return &mem->Vars[iter];
         }
     }
+    if (mem->Parent)
+        return SearchVar(mem->Parent, varName);
     return NULL;
 }
 
@@ -741,7 +882,7 @@ Value AddValue(Value A, Value B) {
     Value R = {};
     R.Int = A.Int + B.Int;
     R.Float = A.Float + B.Float;
-    R.Kind = A.Kind != B.Kind ? ValueType_Float : A.Kind;
+    R.Type = A.Type != B.Type ? ValueType_Float : A.Type;
     return R;
 }
 
@@ -749,7 +890,7 @@ Value SubValue(Value A, Value B) {
     Value R = {};
     R.Int = A.Int - B.Int;
     R.Float = A.Float - B.Float;
-    R.Kind = A.Kind != B.Kind ? ValueType_Float : A.Kind;
+    R.Type = A.Type != B.Type ? ValueType_Float : A.Type;
     return R;
 }
 
@@ -757,7 +898,7 @@ Value MulValue(Value A, Value B) {
     Value R = {};
     R.Int = A.Int * B.Int;
     R.Float = A.Float * B.Float;
-    R.Kind = A.Kind != B.Kind ? ValueType_Float : A.Kind;
+    R.Type = A.Type != B.Type ? ValueType_Float : A.Type;
     return R;
 }
 
@@ -765,18 +906,49 @@ Value DivValue(Value A, Value B) {
     Value R = {};
     R.Int = A.Int / B.Int;
     R.Float = A.Float / B.Float;
-    R.Kind = A.Kind != B.Kind ? ValueType_Float : A.Kind;
+    R.Type = A.Type != B.Type ? ValueType_Float : A.Type;
     return R;
 }
 
 Value Evaluate(ExprNode *expr, Memory *mem);
 
-Value UserDefined(FunctionArguments *args, Memory *mem) {
-    printf("TODO\n");
-    return Value{};
+Value UserDefined(ExprNode *expr, Memory *mem) {
+    Variable *var = SearchVar(mem, expr->SrcToken.Identifier);
+    if (!var) {
+        printf("%s function not defined\n", expr->SrcToken.Identifier); // parser stage
+        exit(-1);
+    }
+    if (var->Value.Type != ValueType_Function) {
+        printf("%s is not a function\n", expr->SrcToken.Identifier); // parser stage
+        exit(-1);
+    }
+
+    ExprNode *func = var->Value.Function;
+
+    if (func->Params.Count != expr->FuncArgs.Count) {
+        printf("invalid number of arguments for function %s\n", expr->SrcToken.Identifier); // parser stage
+        exit(-1);
+    }
+
+    // TODO: do scope checking in parser stage
+
+    Memory nmem;
+    memset(&nmem, 0, sizeof(nmem));
+
+    nmem.Parent = mem;
+
+    for (int iter = 0; iter < func->Params.Count; ++iter) {
+        Variable *arg = GetVariable(&nmem, func->Params.Params[iter].Identifier);
+        arg->Value = Evaluate(expr->FuncArgs.Args[iter], mem);
+    }
+
+    nmem.Ans = Evaluate(func->Left, &nmem);
+
+    return nmem.Ans;
 }
 
-Value Sum(FunctionArguments *args, Memory *mem) {
+Value Sum(ExprNode *expr, Memory *mem) {
+    FunctionArguments *args = &expr->FuncArgs;
     Value d = {};
     for (int iter = 0; iter < args->Count; iter++) {
         d = AddValue(d,Evaluate(args->Args[iter],mem));
@@ -784,22 +956,24 @@ Value Sum(FunctionArguments *args, Memory *mem) {
     return d;
 }
 
-Value Mul(FunctionArguments *args, Memory *mem) {
+Value Mul(ExprNode *expr, Memory *mem) {
+    FunctionArguments *args = &expr->FuncArgs;
     Value d = {};
     d.Int = 1;
     d.Float = 1;
-    d.Kind = ValueType_Int;
+    d.Type = ValueType_Int;
     for (int iter = 0; iter < args->Count; iter++) {
         d = MulValue(d, Evaluate(args->Args[iter], mem));
     }
     return d;
 }
 
-Value Min(FunctionArguments *args, Memory *mem) {
+Value Min(ExprNode *expr, Memory *mem) {
+    FunctionArguments *args = &expr->FuncArgs;
     Value d = {};
     d.Float= DBL_MAX;
     d.Int = INT64_MAX;
-    d.Kind = ValueType_Int;
+    d.Type = ValueType_Int;
     for (int iter = 0; iter < args->Count; iter++) {
         Value n = Evaluate(args->Args[iter], mem);
         if (n.Float < d.Float) d = n;
@@ -807,11 +981,12 @@ Value Min(FunctionArguments *args, Memory *mem) {
     return d;
 }
 
-Value Max(FunctionArguments *args, Memory *mem) {
+Value Max(ExprNode *expr, Memory *mem) {
+    FunctionArguments *args = &expr->FuncArgs;
     Value d = {};
     d.Float = DBL_MAX;
     d.Int = INT64_MAX;
-    d.Kind = ValueType_Int;
+    d.Type = ValueType_Int;
     for (int iter = 0; iter < args->Count; iter++) {
         Value n = Evaluate(args->Args[iter], mem);
         if (n.Float > d.Float) d = n;
@@ -819,42 +994,46 @@ Value Max(FunctionArguments *args, Memory *mem) {
     return d;
 }
 
-Value Sin(FunctionArguments *args, Memory *mem) {
+Value Sin(ExprNode *expr, Memory *mem) {
+    FunctionArguments *args = &expr->FuncArgs;
     Value d = Evaluate(args->Args[0], mem);
     Value r;
     r.Float = sin(d.Float);
-    r.Kind = ValueType_Float;
+    r.Type = ValueType_Float;
     r.Int = (int64_t)r.Float;
     return r;
 }
 
-Value Cos(FunctionArguments *args, Memory *mem) {
+Value Cos(ExprNode *expr, Memory *mem) {
+    FunctionArguments *args = &expr->FuncArgs;
     Value d = Evaluate(args->Args[0], mem);
     Value r;
     r.Float = cos(d.Float);
-    r.Kind = ValueType_Float;
+    r.Type = ValueType_Float;
     r.Int = (int64_t)r.Float;
     return r;
 }
 
-Value Tan(FunctionArguments *args, Memory *mem) {
+Value Tan(ExprNode *expr, Memory *mem) {
+    FunctionArguments *args = &expr->FuncArgs;
     Value d = Evaluate(args->Args[0], mem);
     Value r;
     r.Float = tan(d.Float);
-    r.Kind = ValueType_Float;
+    r.Type = ValueType_Float;
     r.Int = (int64_t)r.Float;
     return r;
 }
-Value Print(FunctionArguments *args, Memory *mem) {
+Value Print(ExprNode *expr, Memory *mem) {
+    FunctionArguments *args = &expr->FuncArgs;
     for (int iter = 0; iter < args->Count; iter++) {
        Value d = Evaluate(args->Args[iter], mem);
-        if (d.Kind == ValueType_Float) {
+        if (d.Type == ValueType_Float) {
             printf("%f ", d.Float);
         }
-        else if (d.Kind == ValueType_Int) {
+        else if (d.Type == ValueType_Int) {
             printf("%ld ", d.Int);
         }
-        else if (d.Kind == ValueType_String) {
+        else if (d.Type == ValueType_String) {
             printf("%s ", d.String);
 
         }
@@ -863,7 +1042,7 @@ Value Print(FunctionArguments *args, Memory *mem) {
     return Value{};
 }
 
-typedef Value (*EvaluateBuiltinFunc)(FunctionArguments *, Memory *);
+typedef Value (*EvaluateBuiltinFunc)(ExprNode *expr, Memory *);
 
 static EvaluateBuiltinFunc BuildinFuncEvaluateTable[] = {
     UserDefined, Sum, Mul, Min, Max, Sin, Cos, Tan, Print
@@ -871,13 +1050,10 @@ static EvaluateBuiltinFunc BuildinFuncEvaluateTable[] = {
 
 Value EvaluateFunction(ExprNode *expr, Memory *mem) {
     if (expr->Func < ArrayCount(BuildinFuncEvaluateTable))
-        return BuildinFuncEvaluateTable[expr->Func](&expr->FuncArgs, mem);
+        return BuildinFuncEvaluateTable[expr->Func](expr, mem);
     printf("TODO\n");
 }
-Value EvaluateUserDefinedFunction(ExprNode *expr, Memory *mem) {
-    printf("TODO\n");
-    return Value{};
-}
+
 Value Evaluate(ExprNode *expr, Memory *mem) {
     if (expr->Kind == ExprKind_Number) {
         return expr->SrcToken.Data;
@@ -925,14 +1101,14 @@ Value Evaluate(ExprNode *expr, Memory *mem) {
             Value d = {};
             d.Int = L.Int & R.Int;
             d.Float = (int)L.Float & (int)R.Float;
-            d.Kind = L.Kind != R.Kind ? ValueType_Float : L.Kind;
+            d.Type = L.Type != R.Type ? ValueType_Float : L.Type;
             return d;
         }
         else if (expr->BinaryOperator == BinaryOperator_BitwiseOr) {
             Value d = {};
             d.Int = L.Int | R.Int;
             d.Float = (int)L.Float | (int)R.Float;
-            d.Kind = L.Kind != R.Kind ? ValueType_Float : L.Kind;
+            d.Type = L.Type != R.Type ? ValueType_Float : L.Type;
             return d;
         }
         else {
@@ -947,18 +1123,45 @@ Value Evaluate(ExprNode *expr, Memory *mem) {
         return var->Value;
     }
 
-    if (expr->Kind == ExprKind_Func) {
+    if (expr->Kind == ExprKind_FuncCall) {
         return EvaluateFunction(expr, mem);
     }
 
     if (expr->Kind == ExprKind_String) {
         Value d = {};
         strcpy_s(d.String, expr->SrcToken.Data.String);
-        d.Kind = ValueType_String;
+        d.Type = ValueType_String;
         return d;
+    }
+
+    if (expr->Kind == ExprKind_Return) {
+        Value d = Evaluate(expr->Left, mem);
+        d.ExitScope = true;
+        return d;
+    }
+
+    if (expr->Kind == ExprKind_Func) {
+        Value d = {};
+        d.Type = ValueType_Function;
+        d.Function = expr;
+        return d;
+    }
+
+    if (expr->Kind == ExprKind_Scope) {
+        Memory nmem;
+        memset(&nmem, 0, sizeof(nmem));
+        nmem.Parent = mem;
+        for (int iter = 0; iter < expr->Scope.StatementCount; ++iter) {
+            nmem.Ans = Evaluate(expr->Scope.Statements[iter], &nmem);
+            if (nmem.Ans.ExitScope)
+                break;
+        }
+        return nmem.Ans;
     }
    
     printf("TODO\n");
+
+    return Value{};
 }
 
 void EvaluateRootExpr(ExprNode *expr, Memory *mem) {
@@ -996,23 +1199,27 @@ int main(int argc, char **argv) {
 
     Parser parser = StartParsing(input, strlen(input));
 
-    Memory memory;
-    memset(&memory, 0, sizeof(memory));
+    Memory mem;
+    memset(&mem, 0, sizeof(mem));
 
     while (Parsing(&parser)) {
-        ExprNode *expr = ParseRootExpression(&parser);
+        ExprNode *expr = ParseStatement(&parser, true);
         PrintExpr(expr, 0);
-        EvaluateRootExpr(expr, &memory);
-        ExprNodeReset();
-        if (memory.Ans.Kind == ValueType_Float) {
-            printf("Float = %f\n", memory.Ans.Float);
+        EvaluateRootExpr(expr, &mem);
+
+        if (mem.Ans.Type == ValueType_Float) {
+            printf("Float = %f\n", mem.Ans.Float);
         }
-        else if(memory.Ans.Kind == ValueType_Int){
-            printf("Int = %ld\n", memory.Ans.Int);
+        else if(mem.Ans.Type == ValueType_Int){
+            printf("Int = %ld\n", mem.Ans.Int);
         }
-        else if (memory.Ans.Kind == ValueType_String) {
-            printf("String = \"%s\"\n", memory.Ans.String);
+        else if (mem.Ans.Type == ValueType_String) {
+            printf("String = \"%s\"\n", mem.Ans.String);
         }
+
+        //if (mem.Ans.ExitScope)
+        //    break;
+
         printf("=================================================================================\n");
     }
     return 0;
