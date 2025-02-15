@@ -39,14 +39,14 @@ const char *TokenNames[] = {
     "invalid", "number", "identifier", "=", ";", "+", "-", "*", "/", "(", ")", "|", "&", "~", "==", "||", "&&"
 };
 
-enum NumberKind {
-    NumberKind_Int,
-    NumberKind_Float,
-    NumberKind_Char,
+enum ReturnKind {
+    ReturnKind_Int,
+    ReturnKind_Float,
+    ReturnKind_Char,
 };
 
-struct NumericValue {
-    NumberKind Kind;
+struct ReturnValue {
+    ReturnKind Kind;
     int64_t Int;
     double Float;
     char Identifier[MAX_IDENTIFIER_SIZE];
@@ -54,9 +54,8 @@ struct NumericValue {
 
 struct Token {
     TokenKind Kind;
-    char      Identifier[MAX_IDENTIFIER_SIZE];
     int       IdentifierLen;
-    NumericValue    Number;
+    ReturnValue    Data;
 };
 
 struct Tokenizer {
@@ -171,10 +170,10 @@ bool Tokenize(Tokenizer *tokenizer, Token *token) {
 
         char *endptr1 = 0;
         char *endptr2 = 0;
-        NumericValue number;
+        ReturnValue number;
         number.Float = strtod(str, &endptr1);
         number.Int = strtol(str, &endptr2, 10);
-        number.Kind = endptr1 == endptr2 ? NumberKind_Int : NumberKind_Float;
+        number.Kind = endptr1 == endptr2 ? ReturnKind_Int : ReturnKind_Float;
 
         if (str + len != endptr1) {
             printf("invalid number\n");
@@ -182,7 +181,7 @@ bool Tokenize(Tokenizer *tokenizer, Token *token) {
         }
 
         token->Kind = TokenKind_Number;
-        token->Number = number;
+        token->Data = number;
 
         return true;
     }
@@ -195,7 +194,7 @@ bool Tokenize(Tokenizer *tokenizer, Token *token) {
             if (!isalnum(a) && a != '_') {
                 break;
             }
-            token->Identifier[token->IdentifierLen] = a;
+            token->Data.Identifier[token->IdentifierLen] = a;
             token->IdentifierLen += 1;
             tokenizer->Position++;
 
@@ -228,7 +227,7 @@ bool Tokenize(Tokenizer *tokenizer, Token *token) {
                         b = tokenizer->Input[tokenizer->Position];
                     }
                 }
-                token->Identifier[iter] = b;
+                token->Data.Identifier[iter] = b;
                 tokenizer->Position++;
             }
     }
@@ -242,9 +241,9 @@ void PrintToken(const Token *token) {
     printf("    %s ", TokenNames[token->Kind]);
 
     if (token->Kind == TokenKind_Number) {
-        printf("(%f)", token->Number);
+        printf("(%f)", token->Data);
     } else if (token->Kind == TokenKind_Identifier) {
-        printf("(%s)", token->Identifier);
+        printf("(%s)", token->Data.Identifier);
     }
 
     printf("\n");
@@ -481,7 +480,7 @@ ExprNode *ParseSubexpression(Parser *parser, bool start) {
             BuiltinFunc func = BuiltinFunc_Sum;
 
             for (int iter = 0; iter < BuiltinFunc_Count; ++iter) {
-                if (!strcmp(BuiltinFuncDescs[iter].Name, token.Identifier)) {
+                if (!strcmp(BuiltinFuncDescs[iter].Name, token.Data.Identifier)) {
                     desc = &BuiltinFuncDescs[iter];
                     func = (BuiltinFunc)iter;
                     break;
@@ -489,7 +488,7 @@ ExprNode *ParseSubexpression(Parser *parser, bool start) {
             }
 
             if (!desc) {
-                printf("%s function is undefined\n", token.Identifier);
+                printf("%s function is undefined\n", token.Data.Identifier);
                 exit(-1);
             }
 
@@ -619,8 +618,8 @@ void PrintExpr(ExprNode *expr, int indent) {
     }
    
     if (expr->Kind == ExprKind_Number) {
-        NumericValue num = expr->SrcToken.Number;
-        if (num.Kind == NumberKind_Float) {
+        ReturnValue num = expr->SrcToken.Data;
+        if (num.Kind == ReturnKind_Float) {
             printf("Float = %f\n", num.Float);
         }
         else {
@@ -630,7 +629,7 @@ void PrintExpr(ExprNode *expr, int indent) {
     }
 
     if (expr->Kind == ExprKind_Identifier) {
-        printf("Identifier: %s\n", expr->SrcToken.Identifier);
+        printf("Identifier: %s\n", expr->SrcToken.Data.Identifier);
         return;
     }
 
@@ -655,7 +654,7 @@ void PrintExpr(ExprNode *expr, int indent) {
     }
 
     if (expr->Kind == ExprKind_BuiltinFunc) {
-        printf("Function: %s\n", expr->SrcToken.Identifier);
+        printf("Function: %s\n", expr->SrcToken.Data.Identifier);
         for (int iter = 0; iter < expr->FuncArgs.Count; ++iter)
             PrintExpr(expr->FuncArgs.Args[iter], indent + 1);
         return;
@@ -670,11 +669,11 @@ void PrintExpr(ExprNode *expr, int indent) {
 
 struct Variable {
     char Name[MAX_IDENTIFIER_SIZE];
-    NumericValue Value;
+    ReturnValue Value;
 };
 
 struct Memory {
-    NumericValue Ans;
+    ReturnValue Ans;
     Variable Vars[MAX_VARIABLE_COUNT];
     int VariableCount;
 };
@@ -701,111 +700,111 @@ Variable *GetVariable(Memory *mem, char *varName) {
     return var;
 }
 
-NumericValue AddValue(NumericValue A, NumericValue B) {
-    NumericValue R = {};
+ReturnValue AddValue(ReturnValue A, ReturnValue B) {
+    ReturnValue R = {};
     R.Int = A.Int + B.Int;
     R.Float = A.Float + B.Float;
-    R.Kind = A.Kind != B.Kind ? NumberKind_Float : A.Kind;
+    R.Kind = A.Kind != B.Kind ? ReturnKind_Float : A.Kind;
     return R;
 }
 
-NumericValue SubValue(NumericValue A, NumericValue B) {
-    NumericValue R = {};
+ReturnValue SubValue(ReturnValue A, ReturnValue B) {
+    ReturnValue R = {};
     R.Int = A.Int - B.Int;
     R.Float = A.Float - B.Float;
-    R.Kind = A.Kind != B.Kind ? NumberKind_Float : A.Kind;
+    R.Kind = A.Kind != B.Kind ? ReturnKind_Float : A.Kind;
     return R;
 }
 
-NumericValue MulValue(NumericValue A, NumericValue B) {
-    NumericValue R = {};
+ReturnValue MulValue(ReturnValue A, ReturnValue B) {
+    ReturnValue R = {};
     R.Int = A.Int * B.Int;
     R.Float = A.Float * B.Float;
-    R.Kind = A.Kind != B.Kind ? NumberKind_Float : A.Kind;
+    R.Kind = A.Kind != B.Kind ? ReturnKind_Float : A.Kind;
     return R;
 }
 
-NumericValue DivValue(NumericValue A, NumericValue B) {
-    NumericValue R = {};
+ReturnValue DivValue(ReturnValue A, ReturnValue B) {
+    ReturnValue R = {};
     R.Int = A.Int / B.Int;
     R.Float = A.Float / B.Float;
-    R.Kind = A.Kind != B.Kind ? NumberKind_Float : A.Kind;
+    R.Kind = A.Kind != B.Kind ? ReturnKind_Float : A.Kind;
     return R;
 }
 
-NumericValue Evaluate(ExprNode *expr, Memory *mem);
+ReturnValue Evaluate(ExprNode *expr, Memory *mem);
 
-NumericValue Sum(FunctionArguments *args, Memory *mem) {
-    NumericValue d = {};
+ReturnValue Sum(FunctionArguments *args, Memory *mem) {
+    ReturnValue d = {};
     for (int iter = 0; iter < args->Count; iter++) {
         d = AddValue(d,Evaluate(args->Args[iter],mem));
     }
     return d;
 }
 
-NumericValue Mul(FunctionArguments *args, Memory *mem) {
-    NumericValue d = {};
+ReturnValue Mul(FunctionArguments *args, Memory *mem) {
+    ReturnValue d = {};
     d.Int = 1;
     d.Float = 1;
-    d.Kind = NumberKind_Int;
+    d.Kind = ReturnKind_Int;
     for (int iter = 0; iter < args->Count; iter++) {
         d = MulValue(d, Evaluate(args->Args[iter], mem));
     }
     return d;
 }
 
-NumericValue Min(FunctionArguments *args, Memory *mem) {
-    NumericValue d = {};
+ReturnValue Min(FunctionArguments *args, Memory *mem) {
+    ReturnValue d = {};
     d.Float= DBL_MAX;
     d.Int = INT64_MAX;
-    d.Kind = NumberKind_Int;
+    d.Kind = ReturnKind_Int;
     for (int iter = 0; iter < args->Count; iter++) {
-        NumericValue n = Evaluate(args->Args[iter], mem);
+        ReturnValue n = Evaluate(args->Args[iter], mem);
         if (n.Float < d.Float) d = n;
     }
     return d;
 }
 
-NumericValue Max(FunctionArguments *args, Memory *mem) {
-    NumericValue d = {};
+ReturnValue Max(FunctionArguments *args, Memory *mem) {
+    ReturnValue d = {};
     d.Float = DBL_MAX;
     d.Int = INT64_MAX;
-    d.Kind = NumberKind_Int;
+    d.Kind = ReturnKind_Int;
     for (int iter = 0; iter < args->Count; iter++) {
-        NumericValue n = Evaluate(args->Args[iter], mem);
+        ReturnValue n = Evaluate(args->Args[iter], mem);
         if (n.Float > d.Float) d = n;
     }
     return d;
 }
 
-NumericValue Sin(FunctionArguments *args, Memory *mem) {
-    NumericValue d = Evaluate(args->Args[0], mem);
-    NumericValue r;
+ReturnValue Sin(FunctionArguments *args, Memory *mem) {
+    ReturnValue d = Evaluate(args->Args[0], mem);
+    ReturnValue r;
     r.Float = sin(d.Float);
-    r.Kind = NumberKind_Float;
+    r.Kind = ReturnKind_Float;
     r.Int = (int64_t)r.Float;
     return r;
 }
 
-NumericValue Cos(FunctionArguments *args, Memory *mem) {
-    NumericValue d = Evaluate(args->Args[0], mem);
-    NumericValue r;
+ReturnValue Cos(FunctionArguments *args, Memory *mem) {
+    ReturnValue d = Evaluate(args->Args[0], mem);
+    ReturnValue r;
     r.Float = cos(d.Float);
-    r.Kind = NumberKind_Float;
+    r.Kind = ReturnKind_Float;
     r.Int = (int64_t)r.Float;
     return r;
 }
 
-NumericValue Tan(FunctionArguments *args, Memory *mem) {
-    NumericValue d = Evaluate(args->Args[0], mem);
-    NumericValue r;
+ReturnValue Tan(FunctionArguments *args, Memory *mem) {
+    ReturnValue d = Evaluate(args->Args[0], mem);
+    ReturnValue r;
     r.Float = tan(d.Float);
-    r.Kind = NumberKind_Float;
+    r.Kind = ReturnKind_Float;
     r.Int = (int64_t)r.Float;
     return r;
 }
-NumericValue Print(FunctionArguments *args, Memory *mem) {
-    NumericValue d = {};
+ReturnValue Print(FunctionArguments *args, Memory *mem) {
+    ReturnValue d = {};
     for (int iter = 0; iter < args->Count; iter++) {
         d = Evaluate(args->Args[0], mem);
         printf("%s\n", d.Identifier);
@@ -813,27 +812,27 @@ NumericValue Print(FunctionArguments *args, Memory *mem) {
     return d;
 }
 
-typedef NumericValue (*EvaluateBuiltinFunc)(FunctionArguments *, Memory *);
+typedef ReturnValue (*EvaluateBuiltinFunc)(FunctionArguments *, Memory *);
 
 static EvaluateBuiltinFunc BuildinFuncEvaluateTable[] = {
     Sum, Mul, Min, Max, Sin, Cos, Tan, Print
 };
 
-NumericValue EvaluateBuildinFunction(ExprNode *expr, Memory *mem) {
+ReturnValue EvaluateBuildinFunction(ExprNode *expr, Memory *mem) {
     if (expr->Func < ArrayCount(BuildinFuncEvaluateTable))
         return BuildinFuncEvaluateTable[expr->Func](&expr->FuncArgs, mem);
     printf("TODO\n");
 }
 
-NumericValue Evaluate(ExprNode *expr, Memory *mem) {
+ReturnValue Evaluate(ExprNode *expr, Memory *mem) {
     if (expr->Kind == ExprKind_Number) {
-        return expr->SrcToken.Number;
+        return expr->SrcToken.Data;
     }
 
     if (expr->Kind == ExprKind_Identifier) {
-        Variable *var = SearchVar(mem, expr->SrcToken.Identifier);
+        Variable *var = SearchVar(mem, expr->SrcToken.Data.Identifier);
         if (!var) {
-            printf("Variable %s is not defined\n", expr->SrcToken.Identifier);
+            printf("Variable %s is not defined\n", expr->SrcToken.Data.Identifier);
             exit(-1);
         }
         return var->Value;
@@ -843,19 +842,19 @@ NumericValue Evaluate(ExprNode *expr, Memory *mem) {
         if (expr->UnaryOperator == UnaryOperator_Plus) {
             return Evaluate(expr->Left, mem);
         } else if (expr->UnaryOperator == UnaryOperator_Minus) {
-            NumericValue v = Evaluate(expr->Left, mem);
+            ReturnValue v = Evaluate(expr->Left, mem);
             v.Int = -v.Int;
             v.Float = -v.Float;
             return v;
         } else {
             printf("TODO\n");
-            return NumericValue{};
+            return ReturnValue{};
         }
     }
 
     if (expr->Kind == ExprKind_BinaryOperator) {
-        NumericValue L = Evaluate(expr->Left, mem);
-        NumericValue R = Evaluate(expr->Right, mem);
+        ReturnValue L = Evaluate(expr->Left, mem);
+        ReturnValue R = Evaluate(expr->Right, mem);
         if (expr->BinaryOperator == BinaryOperator_Plus) {
             return AddValue(L, R);
         }
@@ -869,27 +868,27 @@ NumericValue Evaluate(ExprNode *expr, Memory *mem) {
             return DivValue(L, R);
         }
         else if (expr->BinaryOperator == BinaryOperator_BitwiseAnd) {
-            NumericValue d = {};
+            ReturnValue d = {};
             d.Int = L.Int & R.Int;
             d.Float = (int)L.Float & (int)R.Float;
-            d.Kind = L.Kind != R.Kind ? NumberKind_Float : L.Kind;
+            d.Kind = L.Kind != R.Kind ? ReturnKind_Float : L.Kind;
             return d;
         }
         else if (expr->BinaryOperator == BinaryOperator_BitwiseOr) {
-            NumericValue d = {};
+            ReturnValue d = {};
             d.Int = L.Int | R.Int;
             d.Float = (int)L.Float | (int)R.Float;
-            d.Kind = L.Kind != R.Kind ? NumberKind_Float : L.Kind;
+            d.Kind = L.Kind != R.Kind ? ReturnKind_Float : L.Kind;
             return d;
         }
         else {
             printf("TODO\n");
-            return NumericValue{};
+            return ReturnValue{};
         }
     }
 
     if (expr->Kind == ExprKind_Assignment) {
-        Variable *var = GetVariable(mem, expr->Left->SrcToken.Identifier);
+        Variable *var = GetVariable(mem, expr->Left->SrcToken.Data.Identifier);
         var->Value = Evaluate(expr->Right, mem);
         return var->Value;
     }
@@ -899,9 +898,9 @@ NumericValue Evaluate(ExprNode *expr, Memory *mem) {
     }
 
     if (expr->Kind == ExprKind_String) {
-        NumericValue d = {};
-        strcpy_s(d.Identifier, expr->SrcToken.Identifier);
-        d.Kind = NumberKind_Char;
+        ReturnValue d = {};
+        strcpy_s(d.Identifier, expr->SrcToken.Data.Identifier);
+        d.Kind = ReturnKind_Char;
         return d;
     }
     printf("TODO\n");
@@ -950,13 +949,13 @@ int main(int argc, char **argv) {
         PrintExpr(expr, 0);
         EvaluateRootExpr(expr, &memory);
         ExprNodeReset();
-        if (memory.Ans.Kind == NumberKind_Float) {
+        if (memory.Ans.Kind == ReturnKind_Float) {
             printf("Float = %f\n", memory.Ans.Float);
         }
-        else if(memory.Ans.Kind == NumberKind_Int){
+        else if(memory.Ans.Kind == ReturnKind_Int){
             printf("Int = %ld\n", memory.Ans.Int);
         }
-        else if (memory.Ans.Kind == NumberKind_Char) {
+        else if (memory.Ans.Kind == ReturnKind_Char) {
             printf("String = %s\n", memory.Ans.Identifier);
         }
         printf("=================================================================================\n");
