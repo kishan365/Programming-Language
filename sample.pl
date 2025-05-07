@@ -1,8 +1,4 @@
-a = 5 + 6;
-
-
-b = 4;
-
-
-c = sin(max(a, b));
-
+kishan = "My   \	
+name is kishan shah";
+print(kishan);
+a=2+5;
